@@ -22,6 +22,7 @@
 #include <QDBusConnection>
 #include <QPointer>
 
+#include "config-keepassx.h"
 #include "fdosecrets/dbus/DBusTypes.h"
 #include "gui/MessageBox.h"
 
@@ -65,6 +66,9 @@ private slots:
     void cleanupTestCase();
 
     void testServiceEnable();
+#ifdef KPXC_FEATURE_NETWORK
+    void testWebDavLoginUsesIndependentKeyring();
+#endif
     void testServiceEnableNoExposedDatabase();
     void testServiceSearch();
     void testServiceSearchBlockingUnlock();
