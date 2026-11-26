@@ -466,7 +466,8 @@ void WebDavSession::finished()
     } else {
         receiveFile(operation, etag);
     }
-    if (currentLogin && m_credentialsRevision == loginRevision) {
+    // Public reads may succeed without the server ever checking the supplied login.
+    if (currentLogin && m_credentialsRevision == loginRevision && reply->property("webDavAuthTried").toBool()) {
         emit authenticated();
     }
 }
