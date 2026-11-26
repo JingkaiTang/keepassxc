@@ -620,7 +620,7 @@ void TestGui::testWebDavDatabase()
     QStandardPaths::setTestModeEnabled(true);
     const auto sslConfig = QSslConfiguration::defaultConfiguration();
     auto restoreConfig = qScopeGuard([&] {
-        const QDir testData(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
+        QDir testData(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
         if (testData.dirName() == testAppName) {
             testData.removeRecursively();
         }
