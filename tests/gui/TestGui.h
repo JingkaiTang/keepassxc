@@ -43,6 +43,10 @@ private slots:
     void testRemoteSyncDatabaseSameKey();
     void testRemoteSyncDatabaseRequiresPassword();
     void testOpenRemoteDatabase();
+#ifdef KPXC_FEATURE_NETWORK
+    void testWebDavOpenDialog_data();
+    void testWebDavOpenDialog();
+#endif
     void testAutoreloadDatabase();
     void testTabs();
     void testEditEntry();

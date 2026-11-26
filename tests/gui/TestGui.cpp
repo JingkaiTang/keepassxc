@@ -545,6 +545,55 @@ void TestGui::testOpenRemoteDatabase()
     QTRY_COMPARE(m_tabWidget->tabText(m_tabWidget->currentIndex()), QString("SyncDatabase [Temporary]"));
 }
 
+#ifdef KPXC_FEATURE_NETWORK
+void TestGui::testWebDavOpenDialog_data()
+{
+    QTest::addColumn<bool>("fromWelcome");
+    QTest::newRow("welcome screen") << true;
+    QTest::newRow("database menu") << false;
+}
+
+void TestGui::testWebDavOpenDialog()
+{
+    QFETCH(bool, fromWelcome);
+    if (fromWelcome) {
+        cleanup();
+        auto* openButton = m_mainWindow->findChild<QPushButton*>("buttonOpenWebDav");
+        QVERIFY(openButton);
+        QVERIFY(openButton->isVisible());
+        QTest::mouseClick(openButton, Qt::LeftButton);
+    } else {
+        triggerAction("actionDatabaseOpenWebDav");
+    }
+
+    auto* dialog = m_mainWindow->findChild<QDialog*>("webDavDialog");
+    QVERIFY(dialog);
+    QTRY_VERIFY(dialog->isVisible());
+    auto* url = dialog->findChild<QLineEdit*>("webDavUrl");
+    auto* password = dialog->findChild<QLineEdit*>("webDavPassword");
+    auto* remember = dialog->findChild<QCheckBox*>("webDavRemember");
+    auto* buttons = dialog->findChild<QDialogButtonBox*>("buttonBox");
+    QVERIFY(url);
+    QVERIFY(password);
+    QVERIFY(remember);
+    QVERIFY(buttons);
+    QVERIFY(remember->isChecked());
+    QCOMPARE(password->echoMode(), QLineEdit::Password);
+    auto* ok = buttons->button(QDialogButtonBox::Ok);
+    QVERIFY(ok);
+    QVERIFY(!ok->isEnabled());
+    url->setText("http://example.org/vault.kdbx");
+    QVERIFY(!ok->isEnabled());
+    url->setText("https://user:password@example.org/vault.kdbx");
+    QVERIFY(!ok->isEnabled());
+    url->setText("https://example.org/vault.kdbx");
+    QVERIFY(ok->isEnabled());
+
+    QTest::mouseClick(buttons->button(QDialogButtonBox::Cancel), Qt::LeftButton);
+    QCOMPARE(m_tabWidget->count(), fromWelcome ? 0 : 1);
+}
+#endif
+
 void TestGui::testAutoreloadDatabase()
 {
     config()->set(Config::AutoReloadOnChange, false);
