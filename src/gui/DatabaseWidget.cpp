@@ -373,6 +373,7 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
         label->setTextFormat(Qt::PlainText);
         label->setWordWrap(true);
         auto* merge = new QPushButton(tr("Merge WebDAV Changes…"), banner);
+        merge->setObjectName("webDavMergeButton");
         layout->addWidget(label, 1);
         layout->addWidget(merge);
         static_cast<QVBoxLayout*>(m_mainWidget->layout())->insertWidget(0, banner);
