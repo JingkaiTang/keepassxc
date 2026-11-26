@@ -684,19 +684,21 @@ MainWindow::~MainWindow()
 void MainWindow::restoreConfigState()
 {
     if (config()->get(Config::OpenPreviousDatabasesOnStartup).toBool()) {
-        const QStringList fileNames = config()->get(Config::LastOpenedDatabases).toStringList();
-        for (const QString& filename : fileNames) {
+        const auto fileNames = config()->get(Config::LastOpenedDatabases).toStringList();
+        const auto lastActiveFile = config()->get(Config::LastActiveDatabase).toString();
+        for (const auto& filename : fileNames) {
 #ifdef KPXC_FEATURE_NETWORK
             if (WebDavSession::isReference(filename)) {
-                openDatabase(filename);
+                if (filename != lastActiveFile) {
+                    m_ui->tabWidget->addDatabaseTab(filename, true);
+                }
                 continue;
             }
 #endif
             if (!filename.isEmpty() && QFile::exists(filename)) {
-                openDatabase(filename);
+                m_ui->tabWidget->addDatabaseTab(filename, true);
             }
         }
-        auto lastActiveFile = config()->get(Config::LastActiveDatabase).toString();
         if (!lastActiveFile.isEmpty()) {
             openDatabase(lastActiveFile);
         }

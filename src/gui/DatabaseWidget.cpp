@@ -381,7 +381,7 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
         auto refresh = [this, session, label, merge] {
             m_db->setReadOnly(session->isReadOnly());
             label->setText(session->statusText());
-            merge->setVisible(session->hasConflict());
+            merge->setVisible(session->hasConflict() && !session->isReadOnly());
         };
         connect(session, &WebDavSession::statusChanged, banner, refresh);
         connect(merge, &QPushButton::clicked, session, &WebDavSession::fetchForMerge);
