@@ -706,6 +706,14 @@ void TestGui::testWebDavDatabase()
         triggerAction("actionDatabaseSaveBackup");
         checkDatabase(backup.fileName(), "Automatic save");
         QCOMPARE(m_dbWidget->databaseReference(), remoteRef);
+
+        m_db->metadata()->setName("Saved after backup");
+        QTRY_COMPARE(server.uploaded.count(), 3);
+        TemporaryFile afterBackup;
+        QVERIFY(afterBackup.open());
+        QCOMPARE(afterBackup.write(server.contents), server.contents.size());
+        afterBackup.close();
+        checkDatabase(afterBackup.fileName(), "Saved after backup");
     }
 
     TemporaryFile local;
@@ -714,7 +722,7 @@ void TestGui::testWebDavDatabase()
     QCOMPARE(m_dbWidget->databaseReference(), local.fileName());
     QVERIFY(!m_dbWidget->webDavSession());
     checkDatabase(local.fileName());
-    QCOMPARE(server.preconditions.count(), readOnly ? 0 : 2);
+    QCOMPARE(server.preconditions.count(), readOnly ? 0 : 3);
     // Allow the detached remote session to release its working copy before cleaning the test directory.
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
