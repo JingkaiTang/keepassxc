@@ -614,11 +614,19 @@ void TestGui::testWebDavDatabase()
     QFETCH(bool, readOnly);
     cleanup();
     const bool wasTestMode = QStandardPaths::isTestModeEnabled();
+    const QString appName = QCoreApplication::applicationName();
+    const QString testAppName = QStringLiteral("kpxc-gui-webdav-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QCoreApplication::setApplicationName(testAppName);
     QStandardPaths::setTestModeEnabled(true);
     const auto sslConfig = QSslConfiguration::defaultConfiguration();
     auto restoreConfig = qScopeGuard([&] {
+        const QDir testData(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
+        if (testData.dirName() == testAppName) {
+            testData.removeRecursively();
+        }
         QSslConfiguration::setDefaultConfiguration(sslConfig);
         QStandardPaths::setTestModeEnabled(wasTestMode);
+        QCoreApplication::setApplicationName(appName);
     });
 
     MockWebDavServer server;
@@ -707,6 +715,8 @@ void TestGui::testWebDavDatabase()
     QVERIFY(!m_dbWidget->webDavSession());
     checkDatabase(local.fileName());
     QCOMPARE(server.preconditions.count(), readOnly ? 0 : 2);
+    // Allow the detached remote session to release its working copy before cleaning the test directory.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
 #endif
 
