@@ -161,6 +161,29 @@ QUrl WebDavSession::savedUrl(const QString& reference)
     return isValidUrl(url) ? url : QUrl();
 }
 
+QHash<QString, QString> WebDavSession::recentDisplayNames(const QStringList& references)
+{
+    QHash<QString, QString> names;
+    QHash<QString, int> counts;
+    for (const auto& reference : references) {
+        if (isReference(reference) && !names.contains(reference)) {
+            const auto url = savedUrl(reference).toDisplayString();
+            names.insert(reference, url);
+            ++counts[url];
+        }
+    }
+
+    for (auto it = names.begin(); it != names.end(); ++it) {
+        const auto connection = it.key().right(8);
+        if (it.value().isEmpty()) {
+            it.value() = tr("Unavailable WebDAV database (%1)").arg(connection);
+        } else if (counts.value(it.value()) > 1) {
+            it.value() = tr("%1 (connection %2)").arg(it.value(), connection);
+        }
+    }
+    return names;
+}
+
 QString WebDavSession::reference() const { return m_reference; }
 QUrl WebDavSession::url() const { return m_url; }
 QString WebDavSession::localPath() const { return m_directory + "/database.kdbx"; }

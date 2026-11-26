@@ -211,7 +211,13 @@ void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* logi
                 updateTabName(index);
             }
         } else if (connection.ready && !session->hasPendingUpload()) {
-            releaseWebDav(session->reference());
+            // The final reply can still confirm an updated login after publishing "Synced".
+            QTimer::singleShot(0, session, [this, session] {
+                const auto current = m_webDavConnections.value(session->reference());
+                if (current.session == session && !current.widget && !session->hasPendingUpload()) {
+                    releaseWebDav(session->reference());
+                }
+            });
         }
     });
 

@@ -29,6 +29,7 @@ private slots:
     void initTestCase();
     void cleanupTestCase();
     void connectionReferences();
+    void recentDisplayNames();
     void consecutiveSaves();
     void conflictAndMerge();
     void offlineRecovery();

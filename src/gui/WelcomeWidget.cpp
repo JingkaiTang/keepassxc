@@ -92,14 +92,14 @@ void WelcomeWidget::refreshLastDatabases()
 {
     m_ui->recentListWidget->clear();
     const QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
+    QHash<QString, QString> labels;
+#ifdef KPXC_FEATURE_NETWORK
+    labels = WebDavSession::recentDisplayNames(lastDatabases);
+#endif
     for (const QString& database : lastDatabases) {
         auto itm = new QListWidgetItem;
         itm->setData(Qt::UserRole, database);
-#ifdef KPXC_FEATURE_NETWORK
-        itm->setText(WebDavSession::isReference(database) ? WebDavSession::savedUrl(database).toDisplayString() : database);
-#else
-        itm->setText(database);
-#endif
+        itm->setText(labels.value(database, database));
         m_ui->recentListWidget->addItem(itm);
     }
 

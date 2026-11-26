@@ -6,6 +6,7 @@
 #ifndef KEEPASSXC_WEBDAVSESSION_H
 #define KEEPASSXC_WEBDAVSESSION_H
 
+#include <QHash>
 #include <QObject>
 #include <QTimer>
 #include <QUrl>
@@ -26,6 +27,7 @@ public:
     static QString referenceFor(const QUrl& url, const QString& user);
     static bool isReference(const QString& reference);
     static QUrl savedUrl(const QString& reference);
+    static QHash<QString, QString> recentDisplayNames(const QStringList& references);
     static bool isValidUrl(const QUrl& url);
 
     QString reference() const;

@@ -84,6 +84,30 @@ void TestWebDavSession::connectionReferences()
     }
 }
 
+void TestWebDavSession::recentDisplayNames()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    WebDavSession first(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    WebDavSession second(WebDavSession::referenceFor(server.url(), "bob"), server.url());
+    const auto missing = WebDavSession::referenceFor(server.url(), "unknown");
+    QSignalSpy firstReady(&first, &WebDavSession::ready);
+    QSignalSpy secondReady(&second, &WebDavSession::ready);
+    first.open();
+    second.open();
+    QTRY_COMPARE(firstReady.count(), 1);
+    QTRY_COMPARE(secondReady.count(), 1);
+
+    QCOMPARE(WebDavSession::recentDisplayNames({first.reference()}).value(first.reference()),
+             server.url().toDisplayString());
+    auto labels = WebDavSession::recentDisplayNames({first.reference(), second.reference(), missing, "local.kdbx"});
+    QVERIFY(labels.value(first.reference()).contains(server.url().toDisplayString()));
+    QVERIFY(labels.value(first.reference()) != labels.value(second.reference()));
+    QVERIFY(!labels.value(missing).isEmpty());
+    QVERIFY(!labels.contains("local.kdbx"));
+}
+
 void TestWebDavSession::consecutiveSaves()
 {
     MockWebDavServer server;

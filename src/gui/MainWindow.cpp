@@ -759,14 +759,12 @@ void MainWindow::updateLastDatabasesMenu()
     m_ui->menuRecentDatabases->clear();
 
     const QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
-    for (const QString& database : lastDatabases) {
-        auto label = database;
+    QHash<QString, QString> labels;
 #ifdef KPXC_FEATURE_NETWORK
-        if (WebDavSession::isReference(database)) {
-            label = WebDavSession::savedUrl(database).toDisplayString();
-        }
+    labels = WebDavSession::recentDisplayNames(lastDatabases);
 #endif
-        QAction* action = m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(label));
+    for (const QString& database : lastDatabases) {
+        QAction* action = m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(labels.value(database, database)));
         action->setData(database);
         m_lastDatabasesActions->addAction(action);
     }
