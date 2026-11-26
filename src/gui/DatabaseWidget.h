@@ -309,7 +309,7 @@ private:
     void processAutoOpen();
     void openDatabaseFromEntry(const Entry* entry, bool inBackground = true);
     void performIconDownloads(const QList<Entry*>& entries, bool force = false, bool downloadInBackground = false);
-    bool performSave(QString& errorMessage, const QString& fileName = {});
+    bool performSave(QString& errorMessage, const QString& fileName = {}, bool saveCopy = false);
 
 #ifdef KPXC_FEATURE_NETWORK
     void mergeWebDavDatabase(const QString& filePath);

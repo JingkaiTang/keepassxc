@@ -139,6 +139,41 @@ void TestDatabase::testSaveAs()
     QCOMPARE(error, QString("Could not save, database has not been initialized!"));
 }
 
+void TestDatabase::testSaveCopy()
+{
+    TemporaryFile source;
+    TemporaryFile backup;
+    QVERIFY(source.copyFromFile(dbFileName));
+    auto key = QSharedPointer<CompositeKey>::create();
+    key->addKey(QSharedPointer<PasswordKey>::create("a"));
+
+    Database db;
+    QVERIFY(db.open(source.fileName(), key));
+    auto hash = db.fileBlockHash();
+    auto derivedKey = db.transformedDatabaseKey();
+    auto seed = db.kdf()->seed();
+    QSignalSpy saved(&db, &Database::databaseSaved);
+    QSignalSpy moved(&db, &Database::filePathChanged);
+
+    QVERIFY(db.saveCopy(backup.fileName()));
+    QVERIFY(!db.isModified());
+    QCOMPARE(db.transformedDatabaseKey(), derivedKey);
+    QCOMPARE(db.kdf()->seed(), seed);
+
+    db.metadata()->setName("Unsaved edit");
+    QVERIFY(db.saveCopy(backup.fileName()));
+    QVERIFY(db.isModified());
+    QCOMPARE(db.filePath(), source.fileName());
+    QCOMPARE(db.fileBlockHash(), hash);
+    QCOMPARE(saved.count(), 0);
+    QCOMPARE(moved.count(), 0);
+
+    Database savedBackup;
+    QVERIFY(savedBackup.open(backup.fileName(), key));
+    QCOMPARE(savedBackup.metadata()->name(), QStringLiteral("Unsaved edit"));
+    QVERIFY(db.save()); // still matches the original file, not the backup
+}
+
 void TestDatabase::testReadOnly()
 {
     TemporaryFile source;

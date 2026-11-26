@@ -2744,7 +2744,7 @@ bool DatabaseWidget::saveAs()
     return false;
 }
 
-bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
+bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName, bool saveCopy)
 {
     QPointer<QWidget> focusWidget(qApp->focusWidget());
 
@@ -2785,7 +2785,9 @@ bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
     }
 
     bool ok;
-    if (fileName.isEmpty()) {
+    if (saveCopy) {
+        ok = m_db->saveCopy(fileName, &errorMessage);
+    } else if (fileName.isEmpty()) {
 #ifdef KPXC_FEATURE_NETWORK
         if (m_webDav) {
             saveAction = Database::Atomic;
@@ -2845,20 +2847,8 @@ bool DatabaseWidget::saveBackup()
     }
 #endif
 
-    // Record modified state so we can restore after save
-    bool modified = m_db->isModified();
-
     QString error;
-    bool ok = m_db->saveAs(newFilePath, Database::DirectWrite, {}, &error);
-
-    // Restore database to original state
-    m_db->setFilePath(oldFilePath);
-    if (modified) {
-        // Source database is marked as clean when copy is saved, even if source has unsaved changes
-        m_db->markAsModified();
-    }
-
-    if (!ok) {
+    if (!performSave(error, newFilePath, true)) {
         // Failed to save backup, post the error
         showErrorMessage(tr("Failed to save backup database: %1").arg(error));
         return false;
