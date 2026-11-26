@@ -707,7 +707,11 @@ void TestGui::testWebDavDatabase()
         checkDatabase(backup.fileName(), "Automatic save");
         QCOMPARE(m_dbWidget->databaseReference(), remoteRef);
 
+        m_db->metadata()->setAutosaveDelayMin(1);
         m_db->metadata()->setName("Saved after backup");
+        QTRY_VERIFY(m_db->isModified());
+        QCOMPARE(server.uploaded.count(), 2);
+        m_dbWidget->triggerAutosaveTimer();
         QTRY_COMPARE(server.uploaded.count(), 3);
         TemporaryFile afterBackup;
         QVERIFY(afterBackup.open());
