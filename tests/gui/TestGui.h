@@ -26,6 +26,7 @@ class Database;
 class DatabaseTabWidget;
 class DatabaseWidget;
 class QAbstractItemView;
+class MockWebDavServer;
 
 class TestGui : public QObject
 {
@@ -95,6 +96,9 @@ private:
                     Qt::MouseButton button,
                     Qt::KeyboardModifiers stateKey = {});
     void checkSaveDatabase();
+#ifdef KPXC_FEATURE_NETWORK
+    void checkWebDavMerge(MockWebDavServer& server);
+#endif
     void checkStatusBarText(const QString& textFragment);
     void prepareAndTriggerRemoteSync();
 

@@ -69,6 +69,7 @@
 #include "mock/MockRemoteProcess.h"
 
 #ifdef KPXC_FEATURE_NETWORK
+#include "gui/MergeDialog.h"
 #include "networking/WebDavSession.h"
 #include "util/MockWebDavServer.h"
 #include <QScopeGuard>
@@ -605,13 +606,16 @@ void TestGui::testWebDavOpenDialog()
 void TestGui::testWebDavDatabase_data()
 {
     QTest::addColumn<bool>("readOnly");
-    QTest::newRow("save and upload") << false;
-    QTest::newRow("server without version information") << true;
+    QTest::addColumn<bool>("remoteChanged");
+    QTest::newRow("save and upload") << false << false;
+    QTest::newRow("server without version information") << true << false;
+    QTest::newRow("merge desktop and mobile edits") << false << true;
 }
 
 void TestGui::testWebDavDatabase()
 {
     QFETCH(bool, readOnly);
+    QFETCH(bool, remoteChanged);
     cleanup();
     const bool wasTestMode = QStandardPaths::isTestModeEnabled();
     const QString appName = QCoreApplication::applicationName();
@@ -686,6 +690,8 @@ void TestGui::testWebDavDatabase()
         QVERIFY(newEntry);
         QVERIFY(!newEntry->isEnabled());
         QVERIFY(server.preconditions.isEmpty());
+    } else if (remoteChanged) {
+        checkWebDavMerge(server);
     } else {
         m_db->metadata()->setName("Manual save");
         QTRY_VERIFY(m_db->isModified());
@@ -720,15 +726,71 @@ void TestGui::testWebDavDatabase()
         checkDatabase(afterBackup.fileName(), "Saved after backup");
     }
 
+    const auto putRequests = server.preconditions.count();
     TemporaryFile local;
     fileDialog()->setNextFileName(local.fileName());
     triggerAction("actionDatabaseSaveAs");
     QCOMPARE(m_dbWidget->databaseReference(), local.fileName());
     QVERIFY(!m_dbWidget->webDavSession());
     checkDatabase(local.fileName());
-    QCOMPARE(server.preconditions.count(), readOnly ? 0 : 3);
+    QCOMPARE(server.preconditions.count(), putRequests);
     // Allow the detached remote session to release its working copy before cleaning the test directory.
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+void TestGui::checkWebDavMerge(MockWebDavServer& server)
+{
+    auto addEntry = [](Database* database, const QString& title) {
+        auto* entry = new Entry();
+        entry->setUuid(QUuid::createUuid());
+        entry->setTitle(title);
+        entry->setGroup(database->rootGroup());
+        return entry->uuid();
+    };
+
+    // A second client commits its independent entry to the server first.
+    Database mobile;
+    QVERIFY(mobile.open(m_dbFilePath, m_db->key()));
+    const auto mobileEntry = addEntry(&mobile, "Mobile entry");
+    TemporaryFile mobileCopy;
+    QVERIFY(mobile.saveAs(mobileCopy.fileName(), Database::Atomic, {}));
+    QVERIFY(mobileCopy.open(QIODevice::ReadOnly));
+    const QByteArray mobileContents = mobileCopy.readAll();
+    server.contents = mobileContents;
+    server.etag = "\"mobile\"";
+
+    const auto desktopEntry = addEntry(m_db.data(), "Desktop entry");
+    QTRY_VERIFY(m_db->isModified());
+    triggerAction("actionDatabaseSave");
+    QTRY_VERIFY(m_dbWidget->webDavSession()->hasConflict());
+    QCOMPARE(server.contents, mobileContents);
+    QVERIFY(server.uploaded.isEmpty());
+
+    auto* merge = m_dbWidget->findChild<QPushButton*>("webDavMergeButton");
+    QVERIFY(merge);
+    QVERIFY(merge->isVisible());
+    QTest::mouseClick(merge, Qt::LeftButton);
+    MergeDialog* dialog = nullptr;
+    QTRY_VERIFY((dialog = m_dbWidget->findChild<MergeDialog*>()) && dialog->isVisible());
+    auto* buttons = dialog->findChild<QDialogButtonBox*>("buttonBox");
+    QVERIFY(buttons);
+    QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
+    QTRY_COMPARE(server.uploaded.count(), 1);
+    QCOMPARE(server.preconditions.last(), QByteArray("\"mobile\""));
+    QTRY_VERIFY(!m_dbWidget->webDavSession()->hasConflict());
+
+    TemporaryFile resultFile;
+    QVERIFY(resultFile.open());
+    QCOMPARE(resultFile.write(server.contents), server.contents.size());
+    resultFile.close();
+    Database result;
+    QVERIFY(result.open(resultFile.fileName(), m_db->key()));
+    auto* fromMobile = result.rootGroup()->findEntryByUuid(mobileEntry);
+    auto* fromDesktop = result.rootGroup()->findEntryByUuid(desktopEntry);
+    QVERIFY(fromMobile);
+    QCOMPARE(fromMobile->title(), QString("Mobile entry"));
+    QVERIFY(fromDesktop);
+    QCOMPARE(fromDesktop->title(), QString("Desktop entry"));
 }
 #endif
 
