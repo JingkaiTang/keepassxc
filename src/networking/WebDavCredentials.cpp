@@ -130,9 +130,9 @@ namespace
 
 #include <QCoreApplication>
 #include <QDBusConnection>
-#include <QDBusConnectionInterface>
 #include <QDBusMetaType>
 #include <QDBusReply>
+#include <QFileInfo>
 
 namespace
 {
@@ -155,25 +155,38 @@ namespace
             if (!m_bus.isConnected()) {
                 return;
             }
-            auto bus = m_bus.interface();
-            auto owner = bus->serviceOwner(serviceName);
+            const auto busCall = [this](const QString& method, const QVariantList& args) {
+                auto request = QDBusMessage::createMethodCall(
+                    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", method);
+                request.setArguments(args);
+                return m_bus.call(request, QDBus::Block, 3000);
+            };
+            QDBusReply<QString> owner = busCall("GetNameOwner", {serviceName});
             if (!owner.isValid()) {
-                auto activate = QDBusMessage::createMethodCall(
-                    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "StartServiceByName");
-                activate.setArguments({serviceName, 0u});
-                if (m_bus.call(activate, QDBus::Block, 3000).type() == QDBusMessage::ErrorMessage) {
+                if (busCall("StartServiceByName", {serviceName, 0u}).type() == QDBusMessage::ErrorMessage) {
                     return;
                 }
-                owner = bus->serviceOwner(serviceName);
+                owner = busCall("GetNameOwner", {serviceName});
             }
             // Pin this provider's unique name. Calling KeePassXC's own Secret Service
             // could prompt to unlock the very database we are trying to download.
-            if (owner.isValid()) {
-                const auto pid = bus->servicePid(owner.value());
-                if (pid.isValid() && pid.value() != static_cast<uint>(QCoreApplication::applicationPid())) {
-                    m_owner = owner.value();
-                }
+            const QDBusReply<QString> mainWindow = busCall("GetNameOwner", {"org.keepassxc.KeePassXC.MainWindow"});
+            if (!owner.isValid() || owner.value() == mainWindow.value()) {
+                return;
             }
+            const QDBusReply<uint> pid = busCall("GetConnectionUnixProcessID", {owner.value()});
+            if (!pid.isValid() || pid.value() == static_cast<uint>(QCoreApplication::applicationPid())) {
+                return;
+            }
+#ifdef Q_OS_LINUX
+            // A second instance might own Secret Service without owning the main window bus name.
+            const auto executable = QFileInfo(QStringLiteral("/proc/%1/exe").arg(pid.value())).canonicalFilePath();
+            if (!executable.isEmpty()
+                && executable == QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath()) {
+                return;
+            }
+#endif
+            m_owner = owner.value();
         }
 
         ~Keyring()

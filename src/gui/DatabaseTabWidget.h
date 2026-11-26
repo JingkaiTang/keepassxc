@@ -135,6 +135,7 @@ private:
         QPointer<WebDavDialog> dialog;
         QMetaObject::Connection rememberLogin;
         QString user;
+        quint64 loginRevision = 0;
         bool ready = false;
     };
     void startWebDav(const QString& reference, WebDavDialog* login, bool inBackground);
@@ -142,6 +143,8 @@ private:
     void enterWebDavLogin(WebDavSession* session);
     void applyWebDavLogin(WebDavSession* session, WebDavDialog* dialog);
     void releaseWebDav(const QString& reference);
+    template <typename Operation, typename Callback>
+    void runWebDavCredentialTask(WebDavSession* session, Operation operation, Callback completed);
 
     QHash<QString, WebDavConnection> m_webDavConnections;
     QPointer<WebDavDialog> m_webDavOpenDialog;

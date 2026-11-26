@@ -36,6 +36,8 @@
 #include "gui/remote/WebDavDialog.h"
 #include "networking/WebDavCredentials.h"
 #include "networking/WebDavSession.h"
+#include <QCoreApplication>
+#include <QtConcurrentRun>
 #endif
 #ifdef Q_OS_MACOS
 #include "gui/osutils/macutils/MacUtils.h"
@@ -149,6 +151,36 @@ void DatabaseTabWidget::openDatabase()
 }
 
 #ifdef KPXC_FEATURE_NETWORK
+// Use one worker for the system vault. A write, forget, or subsequent read of the
+// same connection must take effect in request order, including across closed tabs.
+static QThreadPool* webDavCredentialPool()
+{
+    static QPointer<QThreadPool> pool;
+    if (!pool) {
+        pool = new QThreadPool(QCoreApplication::instance());
+        pool->setMaxThreadCount(1);
+    }
+    return pool;
+}
+
+template <typename Operation, typename Callback>
+void DatabaseTabWidget::runWebDavCredentialTask(WebDavSession* session, Operation operation, Callback completed)
+{
+    const auto reference = session->reference();
+    const auto revision = m_webDavConnections.value(reference).loginRevision;
+    auto result = QtConcurrent::run(webDavCredentialPool(), std::move(operation));
+    result.then(
+        this,
+        [this, reference, revision, session = QPointer<WebDavSession>(session), completed = std::move(completed)](
+            std::invoke_result_t<Operation> value) {
+            const auto connection = m_webDavConnections.find(reference);
+            if (session && connection != m_webDavConnections.end() && connection->session == session
+                && connection->loginRevision == revision && (!connection->ready || connection->widget)) {
+                completed(*connection, value);
+            }
+        });
+}
+
 void DatabaseTabWidget::openWebDav()
 {
     if (m_webDavOpenDialog) {
@@ -221,19 +253,35 @@ void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* logi
         }
     });
 
-    if (login) {
-        applyWebDavLogin(session, login);
-    } else {
-        QString user, password;
-        if (WebDavCredentials::read(reference, user, password) == WebDavCredentials::Result::Success) {
-            m_webDavConnections[reference].user = user;
-            session->setCredentials(user, password);
-        }
-    }
     if (!inBackground) {
         emit messageGlobal(tr("Opening WebDAV database…"), MessageWidget::Information);
     }
-    session->open();
+    if (login) {
+        applyWebDavLogin(session, login);
+        session->open();
+        return;
+    }
+
+    struct SavedLogin
+    {
+        QString user;
+        QString password;
+        WebDavCredentials::Result result;
+    };
+    runWebDavCredentialTask(
+        session,
+        [reference] {
+            SavedLogin stored;
+            stored.result = WebDavCredentials::read(reference, stored.user, stored.password);
+            return stored;
+        },
+        [session](WebDavConnection& connection, const SavedLogin& stored) {
+            if (stored.result == WebDavCredentials::Result::Success) {
+                connection.user = stored.user;
+                session->setCredentials(stored.user, stored.password);
+            }
+            session->open();
+        });
 }
 
 void DatabaseTabWidget::attachWebDav(WebDavSession* session, bool inBackground)
@@ -271,6 +319,7 @@ void DatabaseTabWidget::applyWebDavLogin(WebDavSession* session, WebDavDialog* d
     const auto reference = session->reference();
     auto& connection = m_webDavConnections[reference];
     disconnect(connection.rememberLogin);
+    ++connection.loginRevision;
     connection.user = dialog->user();
     const auto password = dialog->password();
     const auto remember = dialog->remember();
@@ -279,16 +328,23 @@ void DatabaseTabWidget::applyWebDavLogin(WebDavSession* session, WebDavDialog* d
         session,
         &WebDavSession::authenticated,
         this,
-        [this, reference, user = connection.user, password, remember] {
-            auto result = remember ? WebDavCredentials::write(reference, user, password)
-                                   : WebDavCredentials::remove(reference);
-            if (result == WebDavCredentials::Result::Unavailable) {
-                const auto message = remember ? tr("Login is valid for this session. The system credential store "
-                                                   "could not remember it on this device.")
-                                              : tr("The system credential store is unavailable. Any previously saved "
-                                                   "login could not be removed.");
-                emit messageGlobal(message, MessageWidget::Warning);
-            }
+        [this, session, reference, user = connection.user, password, remember] {
+            runWebDavCredentialTask(
+                session,
+                [reference, user, password, remember] {
+                    return remember ? WebDavCredentials::write(reference, user, password)
+                                    : WebDavCredentials::remove(reference);
+                },
+                [this, remember](WebDavConnection&, WebDavCredentials::Result result) {
+                    if (result == WebDavCredentials::Result::Unavailable) {
+                        const auto message =
+                            remember ? tr("Login is valid for this session. The system credential store "
+                                          "could not remember it on this device.")
+                                     : tr("The system credential store is unavailable. Any previously saved "
+                                          "login could not be removed.");
+                        emit messageGlobal(message, MessageWidget::Warning);
+                    }
+                });
         },
         Qt::SingleShotConnection);
 }
@@ -306,7 +362,7 @@ void DatabaseTabWidget::enterWebDavLogin(WebDavSession* session)
     connection.dialog = dialog;
     connect(dialog, &QDialog::finished, session, [this, session, dialog, reference](int result) {
         auto it = m_webDavConnections.find(reference);
-        if (it == m_webDavConnections.end()) {
+        if (it == m_webDavConnections.end() || it->session != session || it->dialog != dialog) {
             return;
         }
         it->dialog.clear();
@@ -334,13 +390,22 @@ void DatabaseTabWidget::forgetWebDavCredentials()
     if (!widget || !widget->webDavSession()) {
         return;
     }
-    const auto reference = widget->webDavSession()->reference();
-    disconnect(m_webDavConnections[reference].rememberLogin);
-    if (WebDavCredentials::remove(reference) == WebDavCredentials::Result::Unavailable) {
-        emit messageGlobal(tr("The system credential store could not remove the WebDAV login."), MessageWidget::Error);
-    } else {
-        emit messageGlobal(tr("Saved WebDAV login removed from this device."), MessageWidget::Positive);
-    }
+    auto session = widget->webDavSession();
+    const auto reference = session->reference();
+    auto& connection = m_webDavConnections[reference];
+    disconnect(connection.rememberLogin);
+    ++connection.loginRevision;
+    runWebDavCredentialTask(
+        session,
+        [reference] { return WebDavCredentials::remove(reference); },
+        [this](WebDavConnection&, WebDavCredentials::Result result) {
+            if (result == WebDavCredentials::Result::Unavailable) {
+                emit messageGlobal(tr("The system credential store could not remove the WebDAV login."),
+                                   MessageWidget::Error);
+            } else {
+                emit messageGlobal(tr("Saved WebDAV login removed from this device."), MessageWidget::Positive);
+            }
+        });
 }
 #endif
 
