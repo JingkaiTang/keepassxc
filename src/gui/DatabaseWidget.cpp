@@ -913,6 +913,10 @@ void DatabaseWidget::filterByTag()
 
 void DatabaseWidget::setTag(QAction* action)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     auto tag = action->text();
     auto state = action->isChecked();
     for (auto entry : m_entryView->selectedEntries()) {
@@ -1269,6 +1273,10 @@ int DatabaseWidget::addChildWidget(QWidget* w)
 
 void DatabaseWidget::syncWithRemote(const RemoteParams* params)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     setDisabled(true);
     emit databaseSyncInProgress();
 
@@ -1397,6 +1405,10 @@ void DatabaseWidget::switchToEntryEdit(Entry* entry)
 
 void DatabaseWidget::switchToEntryEdit(Entry* entry, bool create)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     // If creating an entry, it will be in `currentGroup()` so it's
     // okay to use but when editing, the entry may not be in
     // `currentGroup()` so we get the entry's group.
@@ -1418,6 +1430,10 @@ void DatabaseWidget::switchToEntryEdit(Entry* entry, bool create)
 
 void DatabaseWidget::switchToGroupEdit(Group* group, bool create)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     m_editGroupWidget->loadGroup(group, create, m_db);
     setCurrentWidget(m_editGroupWidget);
 }
@@ -1429,6 +1445,7 @@ void DatabaseWidget::connectDatabaseSignals()
             SIGNAL(filePathChanged(QString, QString)),
 
             SIGNAL(databaseFilePathChanged(QString, QString)));
+    connect(m_db.data(), &Database::readOnlyChanged, this, &DatabaseWidget::databaseReadOnlyChanged);
     connect(m_db.data(), &Database::modified, this, &DatabaseWidget::databaseModified);
     connect(m_db.data(), &Database::modified, this, &DatabaseWidget::onDatabaseModified);
     connect(m_db.data(), &Database::databaseSaved, this, &DatabaseWidget::databaseSaved);
@@ -1728,7 +1745,7 @@ void DatabaseWidget::switchToDatabaseReports()
 
 void DatabaseWidget::switchToDatabaseSettings()
 {
-    if (currentMode() != Mode::DatabaseSettingsMode) {
+    if (!m_db->isReadOnly() && currentMode() != Mode::DatabaseSettingsMode) {
         m_databaseSettingDialog->load(m_db);
         setCurrentWidget(m_databaseSettingDialog);
     }
@@ -1899,7 +1916,7 @@ void DatabaseWidget::search(const QString& searchtext)
 
 void DatabaseWidget::saveSearch(const QString& searchtext)
 {
-    if (!m_db->isInitialized()) {
+    if (!m_db->isInitialized() || m_db->isReadOnly()) {
         return;
     }
 
@@ -1926,7 +1943,7 @@ void DatabaseWidget::saveSearch(const QString& searchtext)
 
 void DatabaseWidget::deleteSearch(const QString& name)
 {
-    if (m_db->isInitialized()) {
+    if (m_db->isInitialized() && !m_db->isReadOnly()) {
         m_db->metadata()->deleteSavedSearch(name);
     }
 }
@@ -1972,6 +1989,9 @@ void DatabaseWidget::onDatabaseModified()
 {
     refreshSearch();
     m_remoteSettings->loadSettings();
+    if (m_db->isReadOnly()) {
+        return;
+    }
     int autosaveDelayMs = m_db->metadata()->autosaveDelayMin() * 60 * 1000; // min to msec for QTimer
     bool autosaveAfterEveryChangeConfig = config()->get(Config::AutoSaveAfterEveryChange).toBool();
     if (autosaveDelayMs > 0 && autosaveAfterEveryChangeConfig) {
@@ -1991,7 +2011,7 @@ void DatabaseWidget::onAutosaveDelayTimeout()
 {
     const bool isAutosaveDelayEnabled = m_db->metadata()->autosaveDelayMin() > 0;
     const bool autosaveAfterEveryChangeConfig = config()->get(Config::AutoSaveAfterEveryChange).toBool();
-    if (!(isAutosaveDelayEnabled && autosaveAfterEveryChangeConfig)) {
+    if (m_db->isReadOnly() || !(isAutosaveDelayEnabled && autosaveAfterEveryChangeConfig)) {
         // User might disable the delay/autosave while the timer is running
         return;
     }
@@ -2191,8 +2211,9 @@ bool DatabaseWidget::lock()
     if (m_db->isModified()) {
         bool saved = false;
         // Attempt to save on exit, but don't block locking if it fails
-        if (config()->get(Config::AutoSaveOnExit).toBool()
-            || config()->get(Config::AutoSaveAfterEveryChange).toBool()) {
+        const bool autosave = config()->get(Config::AutoSaveOnExit).toBool()
+                              || config()->get(Config::AutoSaveAfterEveryChange).toBool();
+        if (!m_db->isReadOnly() && autosave) {
             saved = save();
 
             if (!saved) {
@@ -2222,7 +2243,8 @@ bool DatabaseWidget::lock()
                                                MessageBox::Save | MessageBox::Discard | MessageBox::Cancel,
                                                MessageBox::Save);
             if (result == MessageBox::Save) {
-                if (!save()) {
+                saved = m_db->isReadOnly() ? saveAs() : save();
+                if (!saved) {
                     m_attemptingLock = false;
                     return false;
                 }
@@ -2231,7 +2253,8 @@ bool DatabaseWidget::lock()
                 return false;
             }
         }
-    } else if (m_db->hasNonDataChanges() && config()->get(Config::AutoSaveNonDataChanges).toBool()) {
+    } else if (!m_db->isReadOnly() && m_db->hasNonDataChanges()
+               && config()->get(Config::AutoSaveNonDataChanges).toBool()) {
         // Silently auto-save non-data changes, ignore errors
         QString errorMessage;
         performSave(errorMessage);

@@ -114,7 +114,7 @@ public:
                            const QString& userHandle,
                            const QString& privateKey);
 
-    void addEntry(const EntryParameters& entryParameters,
+    bool addEntry(const EntryParameters& entryParameters,
                   const QString& group,
                   const QString& groupUuid,
                   const bool downloadFavicon,

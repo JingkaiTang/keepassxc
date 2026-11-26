@@ -167,8 +167,8 @@ void ImportWizardPageSelect::updateDatabaseChoices() const
             // Remove all connections
             disconnect(dbWidget, nullptr, this, nullptr);
 
-            // Skip over locked databases
-            if (dbWidget->isLocked()) {
+            // Offer only writable import destinations
+            if (dbWidget->isLocked() || dbWidget->database()->isReadOnly()) {
                 continue;
             }
 

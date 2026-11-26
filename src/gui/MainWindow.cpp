@@ -419,6 +419,7 @@ MainWindow::MainWindow()
     m_actionMultiplexer.connect(SIGNAL(groupChanged()), this, SLOT(updateMenuActionState()));
     m_actionMultiplexer.connect(SIGNAL(entrySelectionChanged()), this, SLOT(updateMenuActionState()));
     m_actionMultiplexer.connect(SIGNAL(databaseNonDataChanged()), this, SLOT(updateMenuActionState()));
+    m_actionMultiplexer.connect(SIGNAL(databaseReadOnlyChanged()), this, SLOT(updateMenuActionState()));
     m_actionMultiplexer.connect(SIGNAL(groupContextMenuRequested(QPoint)), this, SLOT(showGroupContextMenu(QPoint)));
     m_actionMultiplexer.connect(SIGNAL(entryContextMenuRequested(QPoint)), this, SLOT(showEntryContextMenu(QPoint)));
     m_actionMultiplexer.connect(SIGNAL(groupChanged()), this, SLOT(updateEntryCountLabel()));
@@ -876,6 +877,7 @@ void MainWindow::updateMenuActionState()
     // Database State
     bool databaseUnlocked = (dbWidget && !dbWidget->isLocked());
     bool inDatabase = (dbMode == DatabaseWidget::Mode::ViewMode);
+    bool writable = databaseUnlocked && !dbWidget->database()->isReadOnly();
     bool inDatabaseSettings = (dbMode == DatabaseWidget::Mode::DatabaseSettingsMode);
     bool inReports = (dbMode == DatabaseWidget::Mode::ReportsMode);
     bool editingEntry = (dbMode == DatabaseWidget::Mode::EditEntryMode);
@@ -912,11 +914,11 @@ void MainWindow::updateMenuActionState()
     bool entryViewAtBottom =
         (groupSelected && dbWidget->currentEntryIndex() == dbWidget->currentGroup()->entries().size() - 1);
 
-    m_ui->actionEntryNew->setEnabled(inDatabase && !inRecycleBin);
-    m_ui->actionEntryClone->setEnabled(singleEntrySelected && !inRecycleBin);
-    m_ui->actionEntryEdit->setEnabled(singleEntrySelected);
-    m_ui->actionEntryExpire->setEnabled(multiEntrySelected);
-    m_ui->actionEntryDelete->setEnabled(multiEntrySelected);
+    m_ui->actionEntryNew->setEnabled(writable && inDatabase && !inRecycleBin);
+    m_ui->actionEntryClone->setEnabled(writable && singleEntrySelected && !inRecycleBin);
+    m_ui->actionEntryEdit->setEnabled(writable && singleEntrySelected);
+    m_ui->actionEntryExpire->setEnabled(writable && multiEntrySelected);
+    m_ui->actionEntryDelete->setEnabled(writable && multiEntrySelected);
     if (dbWidget) {
         if (dbWidget->database()->metadata()->recycleBinEnabled() && !inRecycleBin) {
             m_ui->actionEntryDelete->setToolTip(
@@ -930,15 +932,15 @@ void MainWindow::updateMenuActionState()
     }
     bool hasRecycledEntries = (inDatabase && dbWidget && dbWidget->hasRecycledSelectedEntries());
     m_ui->actionEntryRestore->setVisible(multiEntrySelected && hasRecycledEntries);
-    m_ui->actionEntryRestore->setEnabled(multiEntrySelected && hasRecycledEntries);
+    m_ui->actionEntryRestore->setEnabled(writable && multiEntrySelected && hasRecycledEntries);
     if (dbWidget) {
         m_ui->actionEntryRestore->setText(tr("Restore Entry(s)", "", dbWidget->numberOfSelectedEntries()));
         m_ui->actionEntryRestore->setToolTip(tr("Restore Entry(s)", "", dbWidget->numberOfSelectedEntries()));
     }
     m_ui->actionEntryMoveUp->setVisible(inDatabase && !entryViewSorted);
     m_ui->actionEntryMoveDown->setVisible(inDatabase && !entryViewSorted);
-    m_ui->actionEntryMoveUp->setEnabled(singleEntrySelected && !entryViewSorted && !entryViewAtTop);
-    m_ui->actionEntryMoveDown->setEnabled(singleEntrySelected && !entryViewSorted && !entryViewAtBottom);
+    m_ui->actionEntryMoveUp->setEnabled(writable && singleEntrySelected && !entryViewSorted && !entryViewAtTop);
+    m_ui->actionEntryMoveDown->setEnabled(writable && singleEntrySelected && !entryViewSorted && !entryViewAtBottom);
     m_ui->actionEntryCopyTitle->setEnabled(singleEntryOrEditing && dbWidget->currentEntryHasTitle());
     m_ui->actionEntryCopyUsername->setEnabled(singleEntryOrEditing && dbWidget->currentEntryHasUsername());
     // NOTE: Copy password is enabled even if the selected entry's password is blank to prevent Ctrl+C
@@ -948,7 +950,7 @@ void MainWindow::updateMenuActionState()
     m_ui->actionEntryCopyNotes->setEnabled(singleEntryOrEditing && dbWidget->currentEntryHasNotes());
     m_ui->menuEntryCopyAttribute->setEnabled(singleEntryOrEditing);
     m_ui->menuEntryTotp->setEnabled(singleEntrySelected);
-    m_ui->menuTags->setEnabled(multiEntrySelected);
+    m_ui->menuTags->setEnabled(writable && multiEntrySelected);
     // Handle tear-off tags menu
     if (m_ui->menuTags->isTearOffMenuVisible()) {
         if (!databaseUnlocked) {
@@ -975,15 +977,15 @@ void MainWindow::updateMenuActionState()
     m_ui->actionEntryTotp->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
     m_ui->actionEntryCopyTotp->setEnabled(singleEntrySelected);
     m_ui->actionEntryCopyPasswordTotp->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
-    m_ui->actionEntrySetupTotp->setEnabled(singleEntrySelected);
+    m_ui->actionEntrySetupTotp->setEnabled(writable && singleEntrySelected);
     m_ui->actionEntryTotpQRCode->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
-    m_ui->actionEntryDownloadIcon->setEnabled((multiEntrySelected && !singleEntrySelected)
-                                              || (singleEntrySelected && dbWidget->currentEntryHasUrl()));
+    m_ui->actionEntryDownloadIcon->setEnabled(writable && ((multiEntrySelected && !singleEntrySelected)
+                                                           || (singleEntrySelected && dbWidget->currentEntryHasUrl())));
 #ifdef KPXC_FEATURE_BROWSER
     m_ui->actionEntryImportPasskey->setVisible(singleEntrySelected);
-    m_ui->actionEntryImportPasskey->setEnabled(singleEntrySelected);
+    m_ui->actionEntryImportPasskey->setEnabled(writable && singleEntrySelected);
     m_ui->actionEntryRemovePasskey->setVisible(singleEntrySelected && dbWidget->currentEntryHasPasskey());
-    m_ui->actionEntryRemovePasskey->setEnabled(singleEntrySelected && dbWidget->currentEntryHasPasskey());
+    m_ui->actionEntryRemovePasskey->setEnabled(writable && singleEntrySelected && dbWidget->currentEntryHasPasskey());
 #endif
 #ifdef KPXC_FEATURE_SSHAGENT
     bool hasSSHKey = singleEntrySelected && sshAgent()->isEnabled() && dbWidget->currentEntryHasSshKey();
@@ -995,20 +997,20 @@ void MainWindow::updateMenuActionState()
     m_ui->actionClearSSHAgent->setEnabled(sshAgent()->isEnabled());
 #endif
 
-    m_ui->actionGroupNew->setEnabled(groupSelected && !inRecycleBin);
-    m_ui->actionGroupEdit->setEnabled(groupSelected);
-    m_ui->actionGroupClone->setEnabled(groupSelected && dbWidget->canCloneCurrentGroup());
-    m_ui->actionGroupDelete->setEnabled(groupSelected && dbWidget->canDeleteCurrentGroup());
+    m_ui->actionGroupNew->setEnabled(writable && groupSelected && !inRecycleBin);
+    m_ui->actionGroupEdit->setEnabled(writable && groupSelected);
+    m_ui->actionGroupClone->setEnabled(writable && groupSelected && dbWidget->canCloneCurrentGroup());
+    m_ui->actionGroupDelete->setEnabled(writable && groupSelected && dbWidget->canDeleteCurrentGroup());
     m_ui->actionGroupSortAsc->setVisible(groupHasChildren);
-    m_ui->actionGroupSortAsc->setEnabled(groupHasChildren);
+    m_ui->actionGroupSortAsc->setEnabled(writable && groupHasChildren);
     m_ui->actionGroupSortDesc->setVisible(groupHasChildren);
-    m_ui->actionGroupSortDesc->setEnabled(groupHasChildren);
+    m_ui->actionGroupSortDesc->setEnabled(writable && groupHasChildren);
     m_ui->actionGroupEmptyRecycleBin->setVisible(inRecycleBin);
-    m_ui->actionGroupEmptyRecycleBin->setEnabled(inRecycleBin);
+    m_ui->actionGroupEmptyRecycleBin->setEnabled(writable && inRecycleBin);
 #ifdef KPXC_FEATURE_NETWORK
     m_ui->actionGroupDownloadFavicons->setVisible(!inRecycleBin);
 #endif
-    m_ui->actionGroupDownloadFavicons->setEnabled(groupSelected && groupHasEntries && !inRecycleBin);
+    m_ui->actionGroupDownloadFavicons->setEnabled(writable && groupSelected && groupHasEntries && !inRecycleBin);
 
     // Database Menu
     m_ui->actionDatabaseSave->setEnabled(databaseUnlocked && m_ui->tabWidget->canSave());
@@ -1018,15 +1020,15 @@ void MainWindow::updateMenuActionState()
     m_ui->actionLockDatabase->setEnabled(databaseUnlocked);
     m_ui->actionLockAllDatabases->setEnabled(hasLockableDatabase);
     m_ui->actionLockDatabaseToolbar->setEnabled(hasLockableDatabase);
-    m_ui->actionDatabaseSettings->setEnabled(inDatabase || inDatabaseSettings);
-    m_ui->actionDatabaseSecurity->setEnabled(inDatabase || inDatabaseSettings);
-    m_ui->actionReports->setEnabled(inDatabase || inReports);
+    m_ui->actionDatabaseSettings->setEnabled(writable && (inDatabase || inDatabaseSettings));
+    m_ui->actionDatabaseSecurity->setEnabled(writable && (inDatabase || inDatabaseSettings));
+    m_ui->actionReports->setEnabled(writable && (inDatabase || inReports));
     m_ui->menuRemoteSync->setEnabled(inDatabase || inDatabaseSettings);
     m_ui->menuExport->setEnabled(inDatabase);
-    m_ui->actionDatabaseMerge->setEnabled(inDatabase);
+    m_ui->actionDatabaseMerge->setEnabled(writable && inDatabase);
 #ifdef KPXC_FEATURE_BROWSER
-    m_ui->actionPasskeys->setEnabled(inDatabase || inReports);
-    m_ui->actionImportPasskey->setEnabled(inDatabase);
+    m_ui->actionPasskeys->setEnabled(writable && (inDatabase || inReports));
+    m_ui->actionImportPasskey->setEnabled(writable && inDatabase);
 #endif
 
     m_searchWidgetAction->setEnabled(inDatabase);

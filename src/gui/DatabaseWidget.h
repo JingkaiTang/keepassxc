@@ -144,6 +144,7 @@ signals:
     void databaseModified();
     void databaseReferenceChanged();
     void databaseNonDataChanged();
+    void databaseReadOnlyChanged();
     void databaseSaved();
     void databaseAboutToUnlock();
     void databaseUnlocked();

@@ -144,6 +144,9 @@ namespace FdoSecrets
         if (ret.err()) {
             return ret;
         }
+        if (m_backend->database()->isReadOnly()) {
+            return QDBusError::AccessDenied;
+        }
         ret = ensureUnlocked();
         if (ret.err()) {
             return ret;
@@ -297,6 +300,9 @@ namespace FdoSecrets
         auto ret = ensureBackend();
         if (ret.err()) {
             return ret;
+        }
+        if (m_backend->database()->isReadOnly()) {
+            return QDBusError::AccessDenied;
         }
 
         item = nullptr;
@@ -626,6 +632,10 @@ namespace FdoSecrets
 
     bool Collection::doDeleteEntry(Entry* entry)
     {
+        if (m_backend->database()->isReadOnly()) {
+            return false;
+        }
+
         // Confirm entry removal before moving forward
         bool permanent = entry->isRecycled() || !m_backend->database()->metadata()->recycleBinEnabled();
         if (FdoSecrets::settings()->confirmDeleteItem()
@@ -667,6 +677,10 @@ namespace FdoSecrets
     Item* Collection::doNewItem(const DBusClientPtr& client, QString itemPath)
     {
         Q_ASSERT(m_backend);
+
+        if (m_backend->database()->isReadOnly()) {
+            return nullptr;
+        }
 
         // normalize itemPath
         itemPath = (itemPath.startsWith('/') ? QString{} : QStringLiteral("/")) + itemPath;

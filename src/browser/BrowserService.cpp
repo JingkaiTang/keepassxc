@@ -300,6 +300,10 @@ QJsonObject BrowserService::createNewGroup(const QString& groupName,
         return result;
     }
 
+    if (db->isReadOnly()) {
+        return {};
+    }
+
     auto dialogResult = MessageBox::warning(m_currentDatabaseWidget,
                                             tr("KeePassXC - Create a new group"),
                                             tr("A request for creating a new group \"%1\" has been received.\n"
@@ -582,7 +586,7 @@ bool BrowserService::isPasswordGeneratorRequested() const
 QString BrowserService::storeKey(const QString& key)
 {
     auto db = getDatabase();
-    if (!db) {
+    if (!db || db->isReadOnly()) {
         return {};
     }
 
@@ -887,7 +891,7 @@ void BrowserService::addPasskeyToEntry(Entry* entry,
     entry->endUpdate();
 }
 
-void BrowserService::addEntry(const EntryParameters& entryParameters,
+bool BrowserService::addEntry(const EntryParameters& entryParameters,
                               const QString& group,
                               const QString& groupUuid,
                               const bool downloadFavicon,
@@ -895,8 +899,8 @@ void BrowserService::addEntry(const EntryParameters& entryParameters,
 {
     // TODO: select database based on this key id
     auto db = selectedDb ? selectedDb : selectedDatabase();
-    if (!db) {
-        return;
+    if (!db || db->isReadOnly()) {
+        return false;
     }
 
     // Set title from parameters. If empty, use host of site URL, and append port if found.
@@ -934,6 +938,7 @@ void BrowserService::addEntry(const EntryParameters& entryParameters,
     if (downloadFavicon && m_currentDatabaseWidget) {
         m_currentDatabaseWidget->downloadFaviconInBackground(entry);
     }
+    return true;
 }
 
 bool BrowserService::updateEntry(const EntryParameters& entryParameters, const QString& uuid)
@@ -947,8 +952,7 @@ bool BrowserService::updateEntry(const EntryParameters& entryParameters, const Q
     auto entry = db->rootGroup()->findEntryByUuid(Tools::hexToUuid(uuid));
     if (!entry) {
         // If entry is not found for update, add a new one to the selected database
-        addEntry(entryParameters, "", "", false, db);
-        return true;
+        return addEntry(entryParameters, "", "", false, db);
     }
 
     // Check if the entry password is a reference. If so, update the original entry instead
@@ -1665,15 +1669,14 @@ QSharedPointer<Database> BrowserService::selectedDatabase()
 {
     QList<DatabaseWidget*> databaseWidgets;
     for (auto dbWidget : getMainWindow()->getOpenDatabases()) {
-        // Add only open databases
-        if (!dbWidget->isLocked()) {
+        if (!dbWidget->isLocked() && !dbWidget->database()->isReadOnly()) {
             databaseWidgets << dbWidget;
         }
     }
 
     BrowserEntrySaveDialog browserEntrySaveDialog(m_currentDatabaseWidget);
     int openDatabaseCount = browserEntrySaveDialog.setItems(databaseWidgets, m_currentDatabaseWidget);
-    if (openDatabaseCount > 1) {
+    if (openDatabaseCount > 1 || (openDatabaseCount == 1 && databaseWidgets.first() != m_currentDatabaseWidget)) {
         int res = browserEntrySaveDialog.exec();
         if (res == QDialog::Accepted) {
             const auto selectedDatabase = browserEntrySaveDialog.getSelected();
@@ -1686,8 +1689,7 @@ QSharedPointer<Database> BrowserService::selectedDatabase()
         }
     }
 
-    // Return current database
-    return getDatabase();
+    return databaseWidgets.contains(m_currentDatabaseWidget) ? getDatabase() : nullptr;
 }
 
 void BrowserService::hideWindow() const

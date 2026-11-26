@@ -24,6 +24,7 @@
 #include "fdosecrets/objects/Service.h"
 #include "fdosecrets/objects/Session.h"
 
+#include "core/Database.h"
 #include "core/EntryAttributes.h"
 #include "core/EntryPlaceholders.h"
 #include "core/Group.h"
@@ -138,7 +139,7 @@ namespace FdoSecrets
 
     DBusResult Item::setAttributes(const StringStringMap& attrs)
     {
-        auto ret = ensureBackend();
+        auto ret = ensureBackend(true);
         if (ret.err()) {
             return ret;
         }
@@ -189,7 +190,7 @@ namespace FdoSecrets
 
     DBusResult Item::setLabel(const QString& label)
     {
-        auto ret = ensureBackend();
+        auto ret = ensureBackend(true);
         if (ret.err()) {
             return ret;
         }
@@ -239,7 +240,7 @@ namespace FdoSecrets
 
     DBusResult Item::remove(PromptBase*& prompt)
     {
-        auto ret = ensureBackend();
+        auto ret = ensureBackend(true);
         if (ret.err()) {
             return ret;
         }
@@ -289,7 +290,7 @@ namespace FdoSecrets
 
     DBusResult Item::setSecret(const DBusClientPtr& client, const Secret& secret)
     {
-        auto ret = ensureBackend();
+        auto ret = ensureBackend(true);
         if (ret.err()) {
             return ret;
         }
@@ -341,10 +342,13 @@ namespace FdoSecrets
         return qobject_cast<Collection*>(parent());
     }
 
-    DBusResult Item::ensureBackend() const
+    DBusResult Item::ensureBackend(bool writing) const
     {
         if (!m_backend) {
             return DBusResult(DBUS_ERROR_SECRET_NO_SUCH_OBJECT);
+        }
+        if (writing && m_backend->database() && m_backend->database()->isReadOnly()) {
+            return QDBusError::AccessDenied;
         }
         return {};
     }

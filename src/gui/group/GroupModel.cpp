@@ -185,6 +185,8 @@ Qt::ItemFlags GroupModel::flags(const QModelIndex& modelIndex) const
 {
     if (!modelIndex.isValid()) {
         return Qt::NoItemFlags;
+    } else if (m_db->isReadOnly()) {
+        return QAbstractItemModel::flags(modelIndex);
     } else if (modelIndex == index(0, 0)) {
         return QAbstractItemModel::flags(modelIndex) | Qt::ItemIsDropEnabled;
     } else {
@@ -204,7 +206,7 @@ bool GroupModel::dropMimeData(const QMimeData* data,
         return true;
     }
 
-    if (!data || (action != Qt::MoveAction && action != Qt::CopyAction) || !parent.isValid()) {
+    if (m_db->isReadOnly() || !data || (action != Qt::MoveAction && action != Qt::CopyAction) || !parent.isValid()) {
         return false;
     }
 
@@ -233,7 +235,7 @@ bool GroupModel::dropMimeData(const QMimeData* data,
         stream >> dbUuid >> groupUuid;
 
         Database* db = Database::databaseByUuid(dbUuid);
-        if (!db) {
+        if (!db || (action == Qt::MoveAction && db->isReadOnly())) {
             return false;
         }
 
@@ -281,7 +283,7 @@ bool GroupModel::dropMimeData(const QMimeData* data,
             stream >> dbUuid >> entryUuid;
 
             Database* db = Database::databaseByUuid(dbUuid);
-            if (!db) {
+            if (!db || (action == Qt::MoveAction && db->isReadOnly())) {
                 continue;
             }
 
@@ -422,6 +424,10 @@ void GroupModel::groupMoved()
 
 void GroupModel::sortChildren(Group* rootGroup, bool reverse)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     emit layoutAboutToBeChanged();
 
     QList<QModelIndex> oldIndexes;

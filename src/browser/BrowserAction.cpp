@@ -328,7 +328,7 @@ QJsonObject BrowserAction::handleSetLogin(const QJsonObject& json, const QString
     bool result = true;
     if (uuid.isEmpty()) {
         auto dlFavicon = !downloadFavicon.isEmpty() && downloadFavicon.compare(TRUE_STR) == 0;
-        browserService()->addEntry(entryParameters, group, groupUuid, dlFavicon);
+        result = browserService()->addEntry(entryParameters, group, groupUuid, dlFavicon);
     } else {
         if (!Tools::isValidUuid(uuid)) {
             return getErrorReply(action, ERROR_KEEPASS_NO_VALID_UUID_PROVIDED);
