@@ -54,6 +54,7 @@ signals:
 private:
     enum class Operation { Download, Verify, Upload, Merge };
     bool prepareCache();
+    void prepareNetwork();
     bool record(const QByteArray& etag, const QByteArray& base, const QByteArray& attempt = {});
     void setStatus(const QString& message);
     void publishReady();
@@ -81,7 +82,7 @@ private:
     bool m_transferFailed = false;
     Operation m_operation = Operation::Download;
     std::unique_ptr<QLockFile> m_lock;
-    QNetworkAccessManager* m_network;
+    QNetworkAccessManager* m_network = nullptr;
     QNetworkReply* m_reply = nullptr;
     QTimer m_retryTimer;
     int m_retryDelay = 5000;

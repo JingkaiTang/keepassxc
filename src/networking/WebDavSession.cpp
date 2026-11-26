@@ -111,18 +111,7 @@ WebDavSession::WebDavSession(const QString& reference, const QUrl& url, QObject*
     , m_reference(reference)
     , m_url(url.isEmpty() ? savedUrl(reference) : canonicalUrl(url))
     , m_directory(directoryFor(reference))
-    , m_network(new QNetworkAccessManager(this))
 {
-    m_network->setRedirectPolicy(QNetworkRequest::ManualRedirectPolicy);
-    connect(m_network, &QNetworkAccessManager::authenticationRequired, this,
-            [this](QNetworkReply* reply, QAuthenticator* auth) {
-                if (m_credentialsSet && m_credentialsRevision == m_requestRevision && reply == m_reply
-                    && reply->url() == m_url && !reply->property("webDavAuthTried").toBool()) {
-                    reply->setProperty("webDavAuthTried", true);
-                    auth->setUser(m_user);
-                    auth->setPassword(m_password);
-                }
-            });
     m_retryTimer.setSingleShot(true);
     connect(&m_retryTimer, &QTimer::timeout, this, &WebDavSession::retry);
 }
@@ -187,7 +176,6 @@ void WebDavSession::setCredentials(const QString& user, const QString& password)
     m_user = m_credentialsSet ? user : QString();
     m_password = m_credentialsSet ? password : QString();
     m_needsAuth = false;
-    m_network->clearAccessCache();
 }
 
 bool WebDavSession::prepareCache()
@@ -330,6 +318,30 @@ void WebDavSession::retryLater(const QString& message)
     }
 }
 
+void WebDavSession::prepareNetwork()
+{
+    if (m_network && m_requestRevision == m_credentialsRevision) {
+        return;
+    }
+    // Reset authentication and connection caches only *after* the old request finishes.
+    // Clearing an active manager can close a PUT socket before its response is delivered.
+    if (m_network) {
+        m_network->deleteLater();
+    }
+    m_network = new QNetworkAccessManager(this);
+    m_requestRevision = m_credentialsRevision;
+    m_network->setRedirectPolicy(QNetworkRequest::ManualRedirectPolicy);
+    connect(m_network, &QNetworkAccessManager::authenticationRequired, this,
+            [this](QNetworkReply* reply, QAuthenticator* auth) {
+                if (m_credentialsSet && m_credentialsRevision == m_requestRevision && reply == m_reply
+                    && reply->url() == m_url && !reply->property("webDavAuthTried").toBool()) {
+                    reply->setProperty("webDavAuthTried", true);
+                    auth->setUser(m_user);
+                    auth->setPassword(m_password);
+                }
+            });
+}
+
 void WebDavSession::request(Operation operation)
 {
     m_retryTimer.stop();
@@ -342,7 +354,7 @@ void WebDavSession::request(Operation operation)
     request.setTransferTimeout(30000);
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("KeePassXC"));
-    m_requestRevision = m_credentialsRevision;
+    prepareNetwork();
     if (operation == Operation::Upload) {
         QFile local(localPath());
         if (!local.open(QIODevice::ReadOnly) || !copyBytes(local, *transfer) || !transfer->flush()) {
