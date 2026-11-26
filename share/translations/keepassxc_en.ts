@@ -10866,6 +10866,18 @@ Example: JBSWY3DPEHPK3PXP</source>
         <source>Read-only: the server rejected its current ETag. Changes are saved locally.</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Unavailable WebDAV database (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (connection %2)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not establish a trusted HTTPS connection to the WebDAV server.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>WelcomeWidget</name>
