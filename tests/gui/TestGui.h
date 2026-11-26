@@ -46,6 +46,8 @@ private slots:
 #ifdef KPXC_FEATURE_NETWORK
     void testWebDavOpenDialog_data();
     void testWebDavOpenDialog();
+    void testWebDavDatabase_data();
+    void testWebDavDatabase();
 #endif
     void testAutoreloadDatabase();
     void testTabs();

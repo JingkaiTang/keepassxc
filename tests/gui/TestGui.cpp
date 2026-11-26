@@ -68,6 +68,13 @@
 #include "keys/FileKey.h"
 #include "mock/MockRemoteProcess.h"
 
+#ifdef KPXC_FEATURE_NETWORK
+#include "networking/WebDavSession.h"
+#include "util/MockWebDavServer.h"
+#include <QScopeGuard>
+#include <QStandardPaths>
+#endif
+
 #define TEST_MODAL_NO_WAIT(TEST_CODE)                                                                                  \
     bool dialogFinished = false;                                                                                       \
     QTimer::singleShot(0, [&]() { TEST_CODE dialogFinished = true; })
@@ -591,6 +598,110 @@ void TestGui::testWebDavOpenDialog()
 
     QTest::mouseClick(buttons->button(QDialogButtonBox::Cancel), Qt::LeftButton);
     QCOMPARE(m_tabWidget->count(), fromWelcome ? 0 : 1);
+}
+
+void TestGui::testWebDavDatabase_data()
+{
+    QTest::addColumn<bool>("readOnly");
+    QTest::newRow("save and upload") << false;
+    QTest::newRow("server without version information") << true;
+}
+
+void TestGui::testWebDavDatabase()
+{
+    QFETCH(bool, readOnly);
+    cleanup();
+    const bool wasTestMode = QStandardPaths::isTestModeEnabled();
+    QStandardPaths::setTestModeEnabled(true);
+    const auto sslConfig = QSslConfiguration::defaultConfiguration();
+    auto restoreConfig = qScopeGuard([&] {
+        QSslConfiguration::setDefaultConfiguration(sslConfig);
+        QStandardPaths::setTestModeEnabled(wasTestMode);
+    });
+
+    MockWebDavServer server;
+    QFile original(m_dbFilePath);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    server.contents = original.readAll();
+    server.password = "server-password";
+    if (readOnly) {
+        server.etag.clear();
+    }
+    QVERIFY(server.start());
+    QSslConfiguration::setDefaultConfiguration(server.trustedConfiguration());
+
+    triggerAction("actionDatabaseOpenWebDav");
+    auto* dialog = m_mainWindow->findChild<QDialog*>("webDavDialog");
+    QVERIFY(dialog);
+    auto* url = dialog->findChild<QLineEdit*>("webDavUrl");
+    auto* user = dialog->findChild<QLineEdit*>("webDavUser");
+    auto* password = dialog->findChild<QLineEdit*>("webDavPassword");
+    auto* remember = dialog->findChild<QCheckBox*>("webDavRemember");
+    auto* buttons = dialog->findChild<QDialogButtonBox*>("buttonBox");
+    QVERIFY(url && user && password && remember && buttons);
+    url->setText(server.url().toString());
+    user->setText("alice");
+    password->setText(QString::fromUtf8(server.password));
+    remember->setChecked(false);
+    QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
+
+    QTRY_COMPARE(m_tabWidget->count(), 1);
+    m_dbWidget = m_tabWidget->currentDatabaseWidget();
+    QVERIFY(m_dbWidget->isLocked());
+    auto* unlockWidget = m_dbWidget->findChild<QWidget*>("databaseOpenWidget");
+    QVERIFY(unlockWidget);
+    auto* masterPassword = unlockWidget->findChild<PasswordWidget*>("editPassword");
+    QVERIFY(masterPassword);
+    auto* masterEdit = masterPassword->findChild<QLineEdit*>("passwordEdit");
+    QVERIFY(masterEdit);
+    QVERIFY(masterEdit->text().isEmpty());
+    QTest::keyClicks(masterEdit, "a");
+    QTest::keyClick(masterEdit, Qt::Key_Enter);
+    QTRY_VERIFY(!m_dbWidget->isLocked());
+    m_db = m_dbWidget->database();
+
+    auto* session = m_dbWidget->webDavSession();
+    QVERIFY(session);
+    QCOMPARE(session->isReadOnly(), readOnly);
+    const QString remoteRef = WebDavSession::referenceFor(server.url(), "alice");
+    QCOMPARE(m_dbWidget->databaseReference(), remoteRef);
+    QVERIFY(config()->get(Config::LastDatabases).toStringList().contains(remoteRef));
+    QVERIFY(!config()->get(Config::LastDatabases).toStringList().contains(session->localPath()));
+
+    if (readOnly) {
+        auto* newEntry = m_mainWindow->findChild<QAction*>("actionEntryNew");
+        QVERIFY(newEntry);
+        QVERIFY(!newEntry->isEnabled());
+        QVERIFY(server.preconditions.isEmpty());
+    } else {
+        m_db->metadata()->setName("Manual save");
+        QTRY_VERIFY(m_db->isModified());
+        triggerAction("actionDatabaseSave");
+        QTRY_COMPARE(server.uploaded.count(), 1);
+
+        config()->set(Config::AutoSaveAfterEveryChange, true);
+        m_db->metadata()->setName("Automatic save");
+        QTRY_COMPARE(server.uploaded.count(), 2);
+        TemporaryFile uploaded;
+        QVERIFY(uploaded.open());
+        QCOMPARE(uploaded.write(server.contents), server.contents.size());
+        uploaded.close();
+        checkDatabase(uploaded.fileName(), "Automatic save");
+
+        TemporaryFile backup;
+        fileDialog()->setNextFileName(backup.fileName());
+        triggerAction("actionDatabaseSaveBackup");
+        checkDatabase(backup.fileName(), "Automatic save");
+        QCOMPARE(m_dbWidget->databaseReference(), remoteRef);
+    }
+
+    TemporaryFile local;
+    fileDialog()->setNextFileName(local.fileName());
+    triggerAction("actionDatabaseSaveAs");
+    QCOMPARE(m_dbWidget->databaseReference(), local.fileName());
+    QVERIFY(!m_dbWidget->webDavSession());
+    checkDatabase(local.fileName());
+    QCOMPARE(server.preconditions.count(), readOnly ? 0 : 2);
 }
 #endif
 
