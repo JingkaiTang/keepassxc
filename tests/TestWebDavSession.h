@@ -37,6 +37,8 @@ private slots:
     void readOnly();
     void renewCredentials();
     void uploadWithoutEtag();
+    void rejectedValidator();
+    void editCredentialsDuringUpload();
 
 private:
     QSslConfiguration m_originalTls;

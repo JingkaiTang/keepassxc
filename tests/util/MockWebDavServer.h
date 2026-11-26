@@ -64,6 +64,7 @@ public:
     QByteArray password;
     bool pauseUpload = false;
     bool omitUploadEtag = false;
+    bool rejectConditionalWrites = false;
     QList<QByteArray> uploaded;
     QList<QByteArray> preconditions;
 
@@ -105,7 +106,7 @@ protected:
                 respond(socket, "200 OK", method == "GET" ? contents : QByteArray(), etagHeader());
             } else if (method == "PUT") {
                 preconditions.append(headers.value("if-match"));
-                if (etag.isEmpty() || preconditions.last() != etag) {
+                if (rejectConditionalWrites || etag.isEmpty() || preconditions.last() != etag) {
                     respond(socket, "412 Precondition Failed");
                     return;
                 }

@@ -284,3 +284,47 @@ void TestWebDavSession::uploadWithoutEtag()
     QTRY_COMPARE(server.contents, m_remote);
     QCOMPARE(server.preconditions, QList<QByteArray>({"\"1\"", "\"2\""}));
 }
+
+void TestWebDavSession::rejectedValidator()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    server.rejectConditionalWrites = true;
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    session.setCredentials("alice", {});
+    QSignalSpy ready(&session, &WebDavSession::ready);
+    session.open();
+    QTRY_COMPARE(ready.count(), 1);
+    QVERIFY(commitLocalSave(session.localPath(), m_changed));
+    session.localSaved();
+    QTRY_VERIFY(session.isReadOnly());
+    QCOMPARE(readFile(session.localPath()), m_changed);
+    QCOMPARE(server.contents, m_original);
+    QCOMPARE(server.preconditions, QList<QByteArray>({"\"1\""}));
+}
+
+void TestWebDavSession::editCredentialsDuringUpload()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    server.password = "correct";
+    server.pauseUpload = true;
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    session.setCredentials("alice", "correct");
+    QSignalSpy authenticated(&session, &WebDavSession::authenticated);
+    QSignalSpy rejected(&session, &WebDavSession::authenticationRequired);
+    session.open();
+    QTRY_COMPARE(authenticated.count(), 1);
+    authenticated.clear();
+    QVERIFY(commitLocalSave(session.localPath(), m_changed));
+    session.localSaved();
+    QTRY_COMPARE(server.contents, m_changed);
+
+    // A response to the previous login must never validate an unverified replacement password.
+    session.setCredentials("alice", "typo");
+    server.releaseUpload();
+    QTRY_COMPARE(rejected.count(), 1);
+    QCOMPARE(authenticated.count(), 0);
+}
