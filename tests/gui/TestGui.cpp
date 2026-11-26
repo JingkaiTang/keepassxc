@@ -596,7 +596,9 @@ void TestGui::testWebDavOpenDialog()
     url->setText("https://example.org/vault.kdbx");
     QVERIFY(ok->isEnabled());
 
+    QPointer<QDialog> closingDialog(dialog);
     QTest::mouseClick(buttons->button(QDialogButtonBox::Cancel), Qt::LeftButton);
+    QTRY_VERIFY(closingDialog.isNull());
     QCOMPARE(m_tabWidget->count(), fromWelcome ? 0 : 1);
 }
 
@@ -667,6 +669,9 @@ void TestGui::testWebDavDatabase()
     QCOMPARE(m_dbWidget->databaseReference(), remoteRef);
     QVERIFY(config()->get(Config::LastDatabases).toStringList().contains(remoteRef));
     QVERIFY(!config()->get(Config::LastDatabases).toStringList().contains(session->localPath()));
+    m_mainWindow->openDatabase(remoteRef);
+    QCOMPARE(m_tabWidget->count(), 1);
+    QCOMPARE(m_tabWidget->currentDatabaseWidget(), m_dbWidget.data());
 
     if (readOnly) {
         auto* newEntry = m_mainWindow->findChild<QAction*>("actionEntryNew");
