@@ -30,6 +30,7 @@ private slots:
     void testOpen();
     void testSave();
     void testSaveAs();
+    void testReadOnly();
     void testSignals();
     void testEmptyRecycleBinOnDisabled();
     void testEmptyRecycleBinOnNotCreated();

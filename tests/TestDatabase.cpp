@@ -139,6 +139,31 @@ void TestDatabase::testSaveAs()
     QCOMPARE(error, QString("Could not save, database has not been initialized!"));
 }
 
+void TestDatabase::testReadOnly()
+{
+    TemporaryFile source;
+    QVERIFY(source.copyFromFile(dbFileName));
+    TemporaryFile copy;
+    auto key = QSharedPointer<CompositeKey>::create();
+    key->addKey(QSharedPointer<PasswordKey>::create("a"));
+
+    Database db;
+    QVERIFY(db.open(source.fileName(), key));
+    QVERIFY(!db.isReadOnly());
+    db.setReadOnly(true);
+    db.markNonDataChange();
+    QVERIFY(!db.hasNonDataChanges());
+
+    QString error;
+    QVERIFY(!db.save(Database::Atomic, {}, &error));
+    QVERIFY(!error.isEmpty());
+    QVERIFY(!db.saveAs(source.fileName(), Database::DirectWrite));
+    QVERIFY(!db.saveAs(copy.fileName(), Database::Atomic, source.fileName()));
+    QVERIFY(db.saveAs(copy.fileName()));
+    db.setReadOnly(false);
+    QVERIFY(db.save());
+}
+
 void TestDatabase::testSignals()
 {
     TemporaryFile tempFile;

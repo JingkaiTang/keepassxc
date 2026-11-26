@@ -104,8 +104,6 @@ QUuid Database::uuid() const
 
 /**
  * Open the database from a previously specified file.
- * Unless `readOnly` is set to false, the database will be opened in
- * read-write mode and fall back to read-only if that is not possible.
  *
  * @param key composite key for unlocking the database
  * @param error error message in case of failure
@@ -118,8 +116,6 @@ bool Database::open(QSharedPointer<const CompositeKey> key, QString* error)
 
 /**
  * Open the database from a file.
- * Unless `readOnly` is set to false, the database will be opened in
- * read-write mode and fall back to read-only if that is not possible.
  *
  * If key is provided as null, only headers will be read.
  *
@@ -284,6 +280,14 @@ bool Database::saveAs(const QString& filePath, SaveAction action, const QString&
         return false;
     }
 
+    if (isReadOnly() && (QFileInfo(filePath) == QFileInfo(m_data.filePath)
+                         || (!backupFilePath.isEmpty() && QFileInfo(backupFilePath) == QFileInfo(m_data.filePath)))) {
+        if (error) {
+            *error = tr("This database is read-only. Save a copy to a different file.");
+        }
+        return false;
+    }
+
     // Make sure we don't overwrite external modifications unless explicitly allowed
     if (!m_ignoreFileChangesUntilSaved && !m_fileBlockHash.isEmpty() && filePath == m_data.filePath) {
         QFile dbFile(filePath);
@@ -314,7 +318,6 @@ bool Database::saveAs(const QString& filePath, SaveAction action, const QString&
         }
     }
 
-    // Clear read-only flag
     m_fileWatcher->stop();
 
     // Add random data to prevent side-channel data deduplication attacks
@@ -1068,6 +1071,19 @@ void Database::emptyRecycleBin()
     }
 }
 
+bool Database::isReadOnly() const
+{
+    return m_readOnly;
+}
+
+void Database::setReadOnly(bool readOnly)
+{
+    if (m_readOnly != readOnly) {
+        m_readOnly = readOnly;
+        emit readOnlyChanged(readOnly);
+    }
+}
+
 bool Database::isModified() const
 {
     return m_modified;
@@ -1100,6 +1116,9 @@ void Database::markAsClean()
 
 void Database::markNonDataChange()
 {
+    if (isReadOnly()) {
+        return;
+    }
     m_hasNonDataChange = true;
     emit databaseNonDataChanged();
 }

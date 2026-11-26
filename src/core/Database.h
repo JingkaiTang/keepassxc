@@ -102,6 +102,8 @@ public:
 
     bool isInitialized() const;
     bool isModified() const;
+    bool isReadOnly() const;
+    void setReadOnly(bool readOnly);
     bool hasNonDataChanges() const;
     bool isSaving();
 
@@ -188,6 +190,7 @@ signals:
     void groupAboutToMove(Group* group, Group* toGroup, int index);
     void groupMoved();
     void databaseOpened();
+    void readOnlyChanged(bool readOnly);
     void databaseSaved();
     void databaseDiscarded();
     void databaseFileChanged(bool triggeredBySave);
@@ -252,6 +255,7 @@ private:
     QMutex m_saveMutex;
     QPointer<FileWatcher> m_fileWatcher;
     bool m_modified = false;
+    bool m_readOnly = false;
     bool m_hasNonDataChange = false;
     QString m_keyError;
     bool m_isTemporaryDatabase = false;
