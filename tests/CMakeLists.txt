@@ -191,6 +191,9 @@ if(KPXC_FEATURE_NETWORK OR KPXC_FEATURE_BROWSER)
 endif()
 
 if(KPXC_FEATURE_NETWORK)
+    add_unit_test(NAME testwebdavsession SOURCES TestWebDavSession.cpp
+        LIBS ${TEST_LIBRARIES})
+
     add_unit_test(NAME testupdatecheck SOURCES TestUpdateCheck.cpp
         LIBS ${TEST_LIBRARIES})
 
