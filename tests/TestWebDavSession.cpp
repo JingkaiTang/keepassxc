@@ -42,7 +42,7 @@ namespace
         QSaveFile file(path);
         return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size() && file.commit();
     }
-}
+} // namespace
 
 void TestWebDavSession::initTestCase()
 {
@@ -78,8 +78,10 @@ void TestWebDavSession::connectionReferences()
     QVERIFY(reference != WebDavSession::referenceFor(url, "bob"));
     QVERIFY(reference != WebDavSession::referenceFor(QUrl("https://vault.test:444/shared/Passwords.kdbx"), "alice"));
     QVERIFY(!WebDavSession::isReference("kpxc-webdav:../another-file"));
-    for (const auto& badUrl : {"http://vault.test/db.kdbx", "https://user:pw@vault.test/db.kdbx",
-                               "https://vault.test/db.kdbx?token=secret", "https://vault.test/db.kdbx#fragment"}) {
+    for (const auto& badUrl : {"http://vault.test/db.kdbx",
+                               "https://user:pw@vault.test/db.kdbx",
+                               "https://vault.test/db.kdbx?token=secret",
+                               "https://vault.test/db.kdbx#fragment"}) {
         QVERIFY2(!WebDavSession::isValidUrl(QUrl(badUrl)), badUrl);
     }
 }

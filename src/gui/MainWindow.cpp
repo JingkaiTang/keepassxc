@@ -764,7 +764,8 @@ void MainWindow::updateLastDatabasesMenu()
     labels = WebDavSession::recentDisplayNames(lastDatabases);
 #endif
     for (const QString& database : lastDatabases) {
-        QAction* action = m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(labels.value(database, database)));
+        QAction* action =
+            m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(labels.value(database, database)));
         action->setData(database);
         m_lastDatabasesActions->addAction(action);
     }
@@ -979,8 +980,9 @@ void MainWindow::updateMenuActionState()
     m_ui->actionEntryCopyPasswordTotp->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
     m_ui->actionEntrySetupTotp->setEnabled(writable && singleEntrySelected);
     m_ui->actionEntryTotpQRCode->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
-    m_ui->actionEntryDownloadIcon->setEnabled(writable && ((multiEntrySelected && !singleEntrySelected)
-                                                           || (singleEntrySelected && dbWidget->currentEntryHasUrl())));
+    m_ui->actionEntryDownloadIcon->setEnabled(
+        writable
+        && ((multiEntrySelected && !singleEntrySelected) || (singleEntrySelected && dbWidget->currentEntryHasUrl())));
 #ifdef KPXC_FEATURE_BROWSER
     m_ui->actionEntryImportPasskey->setVisible(singleEntrySelected);
     m_ui->actionEntryImportPasskey->setEnabled(writable && singleEntrySelected);
@@ -1247,10 +1249,10 @@ void MainWindow::updateRemoteSyncMenuEntries()
 #ifdef KPXC_FEATURE_NETWORK
         if (auto* session = dbWidget->webDavSession()) {
             m_ui->menuRemoteSync->addAction(tr("Retry WebDAV Sync"), session, &WebDavSession::retry);
-            m_ui->menuRemoteSync->addAction(tr("Update WebDAV Login…"), m_ui->tabWidget,
-                                            &DatabaseTabWidget::updateWebDavCredentials);
-            m_ui->menuRemoteSync->addAction(tr("Forget WebDAV Login…"), m_ui->tabWidget,
-                                            &DatabaseTabWidget::forgetWebDavCredentials);
+            m_ui->menuRemoteSync->addAction(
+                tr("Update WebDAV Login…"), m_ui->tabWidget, &DatabaseTabWidget::updateWebDavCredentials);
+            m_ui->menuRemoteSync->addAction(
+                tr("Forget WebDAV Login…"), m_ui->tabWidget, &DatabaseTabWidget::forgetWebDavCredentials);
             if (session->isReadOnly()) {
                 return;
             }

@@ -157,9 +157,10 @@ void DatabaseOpenDialog::setTarget(DatabaseWidget* dbWidget, const QString& file
     connect(this, &DatabaseOpenDialog::dialogFinished, dbWidget, &DatabaseWidget::unlockDatabase);
 
     m_currentDbWidget = dbWidget;
-    m_view->load(filePath, filePath == dbWidget->database()->filePath() || m_intent == Intent::WebDavMerge
-                               ? dbWidget->displayFilePath()
-                               : QString());
+    m_view->load(filePath,
+                 filePath == dbWidget->database()->filePath() || m_intent == Intent::WebDavMerge
+                     ? dbWidget->displayFilePath()
+                     : QString());
 }
 
 void DatabaseOpenDialog::setIntent(DatabaseOpenDialog::Intent intent)

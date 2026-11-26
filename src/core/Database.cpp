@@ -282,8 +282,9 @@ bool Database::saveAs(const QString& filePath, SaveAction action, const QString&
         return false;
     }
 
-    if (isReadOnly() && (QFileInfo(filePath) == QFileInfo(m_data.filePath)
-                         || (!backupFilePath.isEmpty() && QFileInfo(backupFilePath) == QFileInfo(m_data.filePath)))) {
+    if (isReadOnly()
+        && (QFileInfo(filePath) == QFileInfo(m_data.filePath)
+            || (!backupFilePath.isEmpty() && QFileInfo(backupFilePath) == QFileInfo(m_data.filePath)))) {
         if (error) {
             *error = tr("This database is read-only. Save a copy to a different file.");
         }

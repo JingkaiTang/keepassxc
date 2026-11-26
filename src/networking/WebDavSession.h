@@ -54,7 +54,13 @@ signals:
     void mergeReady(const QString& localRemoteCopyPath);
 
 private:
-    enum class Operation { Download, Verify, Upload, Merge };
+    enum class Operation
+    {
+        Download,
+        Verify,
+        Upload,
+        Merge
+    };
     bool prepareCache();
     void prepareNetwork();
     bool record(const QByteArray& etag, const QByteArray& base, const QByteArray& attempt = {});

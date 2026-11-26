@@ -137,13 +137,11 @@ private:
         return etag.isEmpty() ? QByteArray() : "ETag: " + etag + "\r\n";
     }
 
-    static void respond(QSslSocket* socket,
-                        const QByteArray& status,
-                        const QByteArray& body = {},
-                        const QByteArray& headers = {})
+    static void
+    respond(QSslSocket* socket, const QByteArray& status, const QByteArray& body = {}, const QByteArray& headers = {})
     {
-        socket->write("HTTP/1.1 " + status + "\r\n" + headers + "Connection: close\r\nContent-Length: "
-                      + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+        socket->write("HTTP/1.1 " + status + "\r\n" + headers
+                      + "Connection: close\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
         socket->disconnectFromHost();
     }
 

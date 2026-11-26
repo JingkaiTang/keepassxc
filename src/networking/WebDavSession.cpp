@@ -104,7 +104,7 @@ namespace
         }
         return count == 0;
     }
-}
+} // namespace
 
 WebDavSession::WebDavSession(const QString& reference, const QUrl& url, QObject* parent)
     : QObject(parent)
@@ -184,13 +184,34 @@ QHash<QString, QString> WebDavSession::recentDisplayNames(const QStringList& ref
     return names;
 }
 
-QString WebDavSession::reference() const { return m_reference; }
-QUrl WebDavSession::url() const { return m_url; }
-QString WebDavSession::localPath() const { return m_directory + "/database.kdbx"; }
-QString WebDavSession::statusText() const { return m_status; }
-bool WebDavSession::isReadOnly() const { return m_etag.isEmpty() && !m_baseHash.isEmpty(); }
-bool WebDavSession::hasConflict() const { return m_conflict; }
-bool WebDavSession::hasPendingUpload() const { return m_dirty || !m_attemptHash.isEmpty(); }
+QString WebDavSession::reference() const
+{
+    return m_reference;
+}
+QUrl WebDavSession::url() const
+{
+    return m_url;
+}
+QString WebDavSession::localPath() const
+{
+    return m_directory + "/database.kdbx";
+}
+QString WebDavSession::statusText() const
+{
+    return m_status;
+}
+bool WebDavSession::isReadOnly() const
+{
+    return m_etag.isEmpty() && !m_baseHash.isEmpty();
+}
+bool WebDavSession::hasConflict() const
+{
+    return m_conflict;
+}
+bool WebDavSession::hasPendingUpload() const
+{
+    return m_dirty || !m_attemptHash.isEmpty();
+}
 
 void WebDavSession::setCredentials(const QString& user, const QString& password)
 {
@@ -354,7 +375,9 @@ void WebDavSession::prepareNetwork()
     m_network = new QNetworkAccessManager(this);
     m_requestRevision = m_credentialsRevision;
     m_network->setRedirectPolicy(QNetworkRequest::ManualRedirectPolicy);
-    connect(m_network, &QNetworkAccessManager::authenticationRequired, this,
+    connect(m_network,
+            &QNetworkAccessManager::authenticationRequired,
+            this,
             [this](QNetworkReply* reply, QAuthenticator* auth) {
                 if (m_credentialsSet && m_credentialsRevision == m_requestRevision && reply == m_reply
                     && reply->url() == m_url && !reply->property("webDavAuthTried").toBool()) {
@@ -472,12 +495,11 @@ void WebDavSession::finished()
         request(Operation::Verify);
         return;
     }
-    if (reply->error() != QNetworkReply::NoError || (operation == Operation::Upload
-            ? (status != 200 && status != 201 && status != 204) : status != 200)) {
+    if (reply->error() != QNetworkReply::NoError
+        || (operation == Operation::Upload ? (status != 200 && status != 201 && status != 204) : status != 200)) {
         if (status == 0 || status == 408 || status == 429 || status >= 500) {
-            retryLater(m_ready && (m_dirty || !m_attemptHash.isEmpty())
-                           ? tr("Saved locally, waiting to sync")
-                           : tr("WebDAV unavailable. Offline"));
+            retryLater(m_ready && (m_dirty || !m_attemptHash.isEmpty()) ? tr("Saved locally, waiting to sync")
+                                                                        : tr("WebDAV unavailable. Offline"));
         } else {
             const auto message = tr("WebDAV request failed (HTTP %1).").arg(status);
             if (!m_ready && !databaseHash(localPath()).isEmpty()) {
@@ -521,8 +543,8 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
     }
     if (operation == Operation::Download) {
         QSaveFile workingCopy(localPath());
-        if (!workingCopy.open(QIODevice::WriteOnly) || !workingCopy.setPermissions(privateFile)
-            || !m_transfer->seek(0) || !copyBytes(*m_transfer, workingCopy) || !workingCopy.commit()) {
+        if (!workingCopy.open(QIODevice::WriteOnly) || !workingCopy.setPermissions(privateFile) || !m_transfer->seek(0)
+            || !copyBytes(*m_transfer, workingCopy) || !workingCopy.commit()) {
             stopWithError(tr("Could not save the downloaded database."));
             return;
         }

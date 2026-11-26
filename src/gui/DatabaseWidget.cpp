@@ -420,7 +420,8 @@ void DatabaseWidget::mergeWebDavDatabase(const QString& filePath)
     dialog->setTarget(this, filePath);
     dialog->showMessage(tr("Unlock the remote version to review its changes. The merged file will use "
                            "the master key of your open database."),
-                        MessageWidget::Information, MessageWidget::DisableAutoHide);
+                        MessageWidget::Information,
+                        MessageWidget::DisableAutoHide);
     dialog->open();
 }
 
@@ -2212,8 +2213,8 @@ bool DatabaseWidget::lock()
     if (m_db->isModified()) {
         bool saved = false;
         // Attempt to save on exit, but don't block locking if it fails
-        const bool autosave = config()->get(Config::AutoSaveOnExit).toBool()
-                              || config()->get(Config::AutoSaveAfterEveryChange).toBool();
+        const bool autosave =
+            config()->get(Config::AutoSaveOnExit).toBool() || config()->get(Config::AutoSaveAfterEveryChange).toBool();
         if (!m_db->isReadOnly() && autosave) {
             saved = save();
 
