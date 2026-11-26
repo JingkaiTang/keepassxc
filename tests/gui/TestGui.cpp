@@ -625,7 +625,7 @@ void TestGui::testWebDavDatabase()
     const auto sslConfig = QSslConfiguration::defaultConfiguration();
     auto restoreConfig = qScopeGuard([&] {
         QDir testData(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
-        if (testData.dirName() == testAppName) {
+        if (!QTest::currentTestFailed() && testData.dirName() == testAppName) {
             testData.removeRecursively();
         }
         QSslConfiguration::setDefaultConfiguration(sslConfig);
@@ -694,7 +694,7 @@ void TestGui::testWebDavDatabase()
         checkWebDavMerge(server);
     } else {
         m_db->metadata()->setName("Manual save");
-        QTRY_VERIFY(m_db->isModified());
+        QTRY_VERIFY(m_tabWidget->tabText(m_tabWidget->currentIndex()).endsWith("*"));
         triggerAction("actionDatabaseSave");
         QTRY_COMPARE(server.uploaded.count(), 1);
 
@@ -760,7 +760,7 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server)
     server.etag = "\"mobile\"";
 
     const auto desktopEntry = addEntry(m_db.data(), "Desktop entry");
-    QTRY_VERIFY(m_db->isModified());
+    QTRY_VERIFY(m_tabWidget->tabText(m_tabWidget->currentIndex()).endsWith("*"));
     triggerAction("actionDatabaseSave");
     QTRY_VERIFY(m_dbWidget->webDavSession()->hasConflict());
     QCOMPARE(server.contents, mobileContents);
