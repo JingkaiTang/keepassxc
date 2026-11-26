@@ -18,6 +18,7 @@
 
 #include "BrowserEntryConfig.h"
 
+#include "core/Database.h"
 #include "core/Entry.h"
 #include "core/Global.h"
 #include "core/Tools.h"
@@ -106,6 +107,9 @@ bool BrowserEntryConfig::load(const Entry* entry)
 
 void BrowserEntryConfig::save(Entry* entry)
 {
+    if (entry->database() && entry->database()->isReadOnly()) {
+        return;
+    }
     QVariantMap v = Tools::qo2qvm(this);
     QJsonObject o = QJsonObject::fromVariantMap(v);
     QByteArray json = QJsonDocument(o).toJson(QJsonDocument::Compact);

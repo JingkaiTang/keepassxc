@@ -66,13 +66,7 @@ void PasskeyImportDialog::setInfo(const QString& relyingParty,
     addDatabases();
     addGroups();
 
-    auto openDatabaseCount = 0;
-    for (auto dbWidget : getMainWindow()->getOpenDatabases()) {
-        if (dbWidget && !dbWidget->isLocked()) {
-            openDatabaseCount++;
-        }
-    }
-    m_ui->selectDatabaseCombobBox->setEnabled(openDatabaseCount > 1);
+    m_ui->selectDatabaseCombobBox->setEnabled(m_ui->selectDatabaseCombobBox->count() > 1);
 
     if (!titleText.isEmpty()) {
         setWindowTitle(titleText);
@@ -120,6 +114,9 @@ void PasskeyImportDialog::addDatabases()
 
     m_ui->selectDatabaseCombobBox->clear();
     for (const auto& db : openDatabases) {
+        if (db->isReadOnly()) {
+            continue;
+        }
         m_ui->selectDatabaseCombobBox->addItem(db->metadata()->name(), db->rootGroup()->uuid());
         if (db->rootGroup()->uuid() == currentDatabase->rootGroup()->uuid()) {
             currentDatabaseIndex = m_ui->selectDatabaseCombobBox->count() - 1;

@@ -676,7 +676,8 @@ QJsonObject BrowserService::showPasskeysRegisterPrompt(const QJsonObject& public
         return getPasskeyError(ERROR_PASSKEYS_CREDENTIAL_IS_EXCLUDED);
     }
 
-    const auto existingEntries = getPasskeyEntriesWithUserHandle(rpId, userId, keyList);
+    auto existingEntries = getPasskeyEntriesWithUserHandle(rpId, userId, keyList);
+    existingEntries.removeIf([](const auto& entry) { return entry->database()->isReadOnly(); });
 
     raiseWindow();
     BrowserPasskeysConfirmationDialog confirmDialog(m_currentDatabaseWidget);
@@ -714,6 +715,9 @@ QJsonObject BrowserService::showPasskeysRegisterPrompt(const QJsonObject& public
                     hideWindow();
                     return getPasskeyError(ERROR_PASSKEYS_REQUEST_CANCELED);
                 }
+            } else if (selectedEntry->database()->isReadOnly()) {
+                hideWindow();
+                return getPasskeyError(ERROR_PASSKEYS_REQUEST_CANCELED);
             } else {
                 addPasskeyToEntry(selectedEntry,
                                   rpId,
