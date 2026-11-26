@@ -62,6 +62,8 @@
 
 #ifdef KPXC_FEATURE_NETWORK
 #include "gui/IconDownloaderDialog.h"
+#include "networking/WebDavSession.h"
+#include <QPushButton>
 #endif
 
 #ifdef KPXC_FEATURE_SSHAGENT
@@ -336,6 +338,106 @@ bool DatabaseWidget::isEditWidgetModified() const
     return false;
 }
 
+QString DatabaseWidget::databaseReference() const
+{
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        return m_webDav->reference();
+    }
+#endif
+    return m_db->filePath();
+}
+
+#ifdef KPXC_FEATURE_NETWORK
+WebDavSession* DatabaseWidget::webDavSession() const
+{
+    return m_webDav;
+}
+
+void DatabaseWidget::setWebDavSession(WebDavSession* session)
+{
+    if (m_webDav == session) {
+        return;
+    }
+    if (m_webDav) {
+        disconnect(m_webDav, nullptr, this, nullptr);
+        delete m_webDavBanner;
+    }
+    m_webDav = session;
+    m_db->setReadOnly(session && session->isReadOnly());
+    if (session) {
+        auto* banner = new QWidget(m_mainWidget);
+        auto* layout = new QHBoxLayout(banner);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* label = new QLabel(banner);
+        label->setTextFormat(Qt::PlainText);
+        label->setWordWrap(true);
+        auto* merge = new QPushButton(tr("Merge WebDAV Changes…"), banner);
+        layout->addWidget(label, 1);
+        layout->addWidget(merge);
+        static_cast<QVBoxLayout*>(m_mainWidget->layout())->insertWidget(0, banner);
+        m_webDavBanner = banner;
+
+        auto refresh = [this, session, label, merge] {
+            m_db->setReadOnly(session->isReadOnly());
+            label->setText(session->statusText());
+            merge->setVisible(session->hasConflict());
+        };
+        connect(session, &WebDavSession::statusChanged, banner, refresh);
+        connect(merge, &QPushButton::clicked, session, &WebDavSession::fetchForMerge);
+        connect(session, &WebDavSession::mergeReady, this, &DatabaseWidget::mergeWebDavDatabase);
+        refresh();
+        if (isLocked()) {
+            switchToOpenDatabase(m_db->filePath());
+        }
+    }
+    emit databaseReferenceChanged();
+}
+
+void DatabaseWidget::mergeWebDavDatabase(const QString& filePath)
+{
+    if (!m_webDav || !m_webDav->hasConflict() || currentMode() != Mode::ViewMode) {
+        return;
+    }
+
+    auto target = m_db;
+    auto remote = QSharedPointer<Database>::create();
+    if (remote->open(filePath, target->key())) {
+        if (target == m_db && !isLocked()) {
+            reviewWebDavMerge(remote);
+        }
+        return;
+    }
+    if (target != m_db || isLocked()) {
+        return;
+    }
+
+    // The remote database may have had its master key changed on another device.
+    auto* dialog = new DatabaseOpenDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setIntent(DatabaseOpenDialog::Intent::WebDavMerge);
+    dialog->setTarget(this, filePath);
+    dialog->showMessage(tr("Unlock the remote version to review its changes. The merged file will use "
+                           "the master key of your open database."),
+                        MessageWidget::Information, MessageWidget::DisableAutoHide);
+    dialog->open();
+}
+
+void DatabaseWidget::reviewWebDavMerge(const QSharedPointer<Database>& remote)
+{
+    if (!m_webDav || !m_webDav->hasConflict() || isLocked() || !remote) {
+        return;
+    }
+    auto* dialog = new MergeDialog(remote, m_db, this);
+    connect(dialog, &MergeDialog::databaseMerged, this, [this, target = m_db](bool) {
+        if (target == m_db && !isLocked() && m_webDav && m_webDav->hasConflict() && save()) {
+            m_webDav->acceptMergeBase();
+        }
+    });
+    dialog->open();
+}
+#endif
+
 QString DatabaseWidget::displayName() const
 {
     if (!m_db) {
@@ -360,6 +462,11 @@ QString DatabaseWidget::displayName() const
 
 QString DatabaseWidget::displayFileName() const
 {
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        return m_webDav->url().fileName();
+    }
+#endif
     if (m_db) {
         QFileInfo fileinfo(m_db->filePath());
         return fileinfo.fileName();
@@ -369,6 +476,11 @@ QString DatabaseWidget::displayFileName() const
 
 QString DatabaseWidget::displayFilePath() const
 {
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        return m_webDav->url().toDisplayString();
+    }
+#endif
     if (m_db) {
         return m_db->canonicalFilePath();
     }
@@ -486,6 +598,11 @@ void DatabaseWidget::replaceDatabase(QSharedPointer<Database> db)
     // signals triggering dangling pointers.
     auto oldDb = m_db;
     m_db = std::move(db);
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        m_db->setReadOnly(m_webDav->isReadOnly());
+    }
+#endif
     connectDatabaseSignals();
     m_groupView->changeDatabase(m_db);
     m_tagView->setDatabase(m_db);
@@ -1489,6 +1606,12 @@ void DatabaseWidget::unlockDatabase(bool accepted)
     }
 
     if (senderDialog) {
+#ifdef KPXC_FEATURE_NETWORK
+        if (senderDialog->intent() == DatabaseOpenDialog::Intent::WebDavMerge) {
+            reviewWebDavMerge(senderDialog->database());
+            return;
+        }
+#endif
         if (senderDialog->intent() == DatabaseOpenDialog::Intent::Merge) {
             mergeDatabase(accepted);
             return;
@@ -1620,7 +1743,7 @@ void DatabaseWidget::switchToOpenDatabase()
 
 void DatabaseWidget::switchToOpenDatabase(const QString& filePath)
 {
-    m_databaseOpenWidget->load(filePath);
+    m_databaseOpenWidget->load(filePath, filePath == m_db->filePath() ? displayFilePath() : QString());
     setCurrentWidget(m_databaseOpenWidget);
 }
 
@@ -2566,21 +2689,35 @@ bool DatabaseWidget::saveAs()
             QDir::toNativeSeparators(FileDialog::getLastDir("db") + "/"
                                      + (defaultFileName.isEmpty() ? tr("Passwords").append(".kdbx") : defaultFileName));
     }
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        oldFilePath = QDir(FileDialog::getLastDir("db")).filePath(displayFileName());
+    }
+#endif
     const QString newFilePath = fileDialog()->getSaveFileName(
         this, tr("Save database as"), oldFilePath, tr("KeePass 2 Database").append(" (*.kdbx)"));
 
-    bool ok = false;
     if (!newFilePath.isEmpty()) {
         QString errorMessage;
-        if (!performSave(errorMessage, newFilePath)) {
-            showMessage(tr("Writing the database failed: %1").arg(errorMessage),
-                        MessageWidget::Error,
-                        true,
-                        MessageWidget::LongAutoHideTimeout);
+#ifdef KPXC_FEATURE_NETWORK
+        if (m_webDav && QFileInfo(newFilePath) == QFileInfo(m_webDav->localPath())) {
+            showErrorMessage(tr("Choose a location outside the WebDAV working copy."));
+            return false;
         }
+#endif
+        if (performSave(errorMessage, newFilePath)) {
+#ifdef KPXC_FEATURE_NETWORK
+            setWebDavSession(nullptr);
+#endif
+            return true;
+        }
+        showMessage(tr("Writing the database failed: %1").arg(errorMessage),
+                    MessageWidget::Error,
+                    true,
+                    MessageWidget::LongAutoHideTimeout);
     }
 
-    return ok;
+    return false;
 }
 
 bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
@@ -2625,7 +2762,17 @@ bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
 
     bool ok;
     if (fileName.isEmpty()) {
+#ifdef KPXC_FEATURE_NETWORK
+        if (m_webDav) {
+            saveAction = Database::Atomic;
+        }
+#endif
         ok = m_db->save(saveAction, backupFilePath, &errorMessage);
+#ifdef KPXC_FEATURE_NETWORK
+        if (ok && m_webDav) {
+            m_webDav->localSaved();
+        }
+#endif
     } else {
         ok = m_db->saveAs(fileName, saveAction, backupFilePath, &errorMessage);
     }
@@ -2666,6 +2813,13 @@ bool DatabaseWidget::saveBackup()
     if (newFilePath.isEmpty()) {
         return false;
     }
+
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav && QFileInfo(newFilePath) == QFileInfo(m_webDav->localPath())) {
+        showErrorMessage(tr("Choose a location outside the WebDAV working copy."));
+        return false;
+    }
+#endif
 
     // Record modified state so we can restore after save
     bool modified = m_db->isModified();

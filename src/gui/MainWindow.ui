@@ -247,6 +247,7 @@
     </widget>
     <addaction name="actionDatabaseNew"/>
     <addaction name="actionDatabaseOpen"/>
+    <addaction name="actionDatabaseOpenWebDav"/>
     <addaction name="menuRecentDatabases"/>
     <addaction name="actionDatabaseSave"/>
     <addaction name="actionDatabaseSaveAs"/>
@@ -479,6 +480,11 @@
    </property>
    <property name="menuRole">
     <enum>QAction::ApplicationSpecificRole</enum>
+   </property>
+  </action>
+  <action name="actionDatabaseOpenWebDav">
+   <property name="text">
+    <string>Open from WebDAV…</string>
    </property>
   </action>
   <action name="actionDatabaseOpen">

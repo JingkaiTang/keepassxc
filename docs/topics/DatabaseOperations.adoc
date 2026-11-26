@@ -420,6 +420,16 @@ image::database_maintenance.png[]
 == Remote database support
 KeePassXC provides support for syncing database files that reside in a remote location. If you can download/upload the database file via a commandline tool (e.g. rsync, ssh, scp etc.) KeePassXC offers easy to use functionality to sync the remote database.
 
+=== Open a WebDAV database
+
+Choose _Open from WebDAV…_ on the welcome screen or in the _Database_ menu. Paste the full HTTPS URL of the database file, then enter your WebDAV username and password. Use a direct file URL without embedded credentials, a query string, or a fragment. Unlock the downloaded database using its usual master key.
+
+_Remember login on this device_ saves the WebDAV login in the current user's system credential store. A recent database can then be reopened without entering the WebDAV login again. On Linux, this requires an available desktop Secret Service independent of the open database. Use _Database > Remote Sync…_ to update or forget a WebDAV login.
+
+Manual and automatic saves first commit an encrypted working copy on this device. _Synced_ means the server has confirmed the latest save. While offline, keep working with the encrypted copy; pending saves survive restarting KeePassXC. _Save Database As…_ switches the tab to a local file, and _Save Database Backup…_ writes a separate copy.
+
+When another device has changed the database, choose _Merge WebDAV Changes…_ to review the changes before uploading, or save a local copy. Servers must support a strong ETag and conditional writes for automatic synchronization. A database without a strong ETag opens read-only.
+
 === Sync with remote database
 Open the remote sync settings via _Database > Database Settings… > Remote_ to create commands to sync a local database or a temporary local copy of a remote database.
 

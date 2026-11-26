@@ -113,8 +113,7 @@ void DatabaseOpenDialog::addDatabaseTab(DatabaseWidget* dbWidget)
     // important - we must add the DB widget first, because addTab will fire
     // tabChanged immediately which will look for a dbWidget in the list
     m_tabDbWidgets.append(dbWidget);
-    QFileInfo fileInfo(dbWidget->database()->filePath());
-    m_tabBar->addTab(fileInfo.fileName());
+    m_tabBar->addTab(dbWidget->displayFileName());
     Q_ASSERT(m_tabDbWidgets.count() == m_tabBar->count());
 }
 
@@ -158,7 +157,9 @@ void DatabaseOpenDialog::setTarget(DatabaseWidget* dbWidget, const QString& file
     connect(this, &DatabaseOpenDialog::dialogFinished, dbWidget, &DatabaseWidget::unlockDatabase);
 
     m_currentDbWidget = dbWidget;
-    m_view->load(filePath);
+    m_view->load(filePath, filePath == dbWidget->database()->filePath() || m_intent == Intent::WebDavMerge
+                               ? dbWidget->displayFilePath()
+                               : QString());
 }
 
 void DatabaseOpenDialog::setIntent(DatabaseOpenDialog::Intent intent)

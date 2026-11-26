@@ -38,6 +38,7 @@ public:
 signals:
     void newDatabase();
     void openDatabase();
+    void openWebDav();
     void openDatabaseFile(QString);
     void importFile();
 

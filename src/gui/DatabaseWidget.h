@@ -46,6 +46,7 @@ class EntryPreviewWidget;
 class TagView;
 class ElidedLabel;
 class RemoteSettings;
+class WebDavSession;
 struct RemoteParams;
 
 namespace Ui
@@ -103,6 +104,11 @@ public:
     int numberOfSelectedEntries() const;
     int currentEntryIndex() const;
 
+    QString databaseReference() const;
+#ifdef KPXC_FEATURE_NETWORK
+    WebDavSession* webDavSession() const;
+    void setWebDavSession(WebDavSession* session);
+#endif
     QString displayName() const;
     QString displayFileName() const;
     QString displayFilePath() const;
@@ -136,6 +142,7 @@ signals:
     // relayed Database signals
     void databaseFilePathChanged(const QString& oldPath, const QString& newPath);
     void databaseModified();
+    void databaseReferenceChanged();
     void databaseNonDataChanged();
     void databaseSaved();
     void databaseAboutToUnlock();
@@ -303,6 +310,12 @@ private:
     void performIconDownloads(const QList<Entry*>& entries, bool force = false, bool downloadInBackground = false);
     bool performSave(QString& errorMessage, const QString& fileName = {});
 
+#ifdef KPXC_FEATURE_NETWORK
+    void mergeWebDavDatabase(const QString& filePath);
+    void reviewWebDavMerge(const QSharedPointer<Database>& remote);
+    QPointer<WebDavSession> m_webDav;
+    QPointer<QWidget> m_webDavBanner;
+#endif
     QSharedPointer<Database> m_db;
 
     QPointer<QWidget> m_mainWidget;

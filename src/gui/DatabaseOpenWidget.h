@@ -43,7 +43,7 @@ class DatabaseOpenWidget : public DialogyWidget
 public:
     explicit DatabaseOpenWidget(QWidget* parent = nullptr);
     ~DatabaseOpenWidget() override;
-    void load(const QString& filename);
+    void load(const QString& filename, const QString& displayPath = {});
     QString filename();
     void clearForms();
     void enterKey(const QString& pw, const QString& keyFile);
@@ -70,6 +70,7 @@ protected:
     const QScopedPointer<Ui::DatabaseOpenWidget> m_ui;
     QSharedPointer<Database> m_db;
     QString m_filename;
+    QString m_displayPath;
     bool m_retryUnlockWithEmptyPassword = false;
 
 protected slots:

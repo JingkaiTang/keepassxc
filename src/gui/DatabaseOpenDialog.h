@@ -41,6 +41,7 @@ public:
         AutoType,
         Merge,
         RemoteSync,
+        WebDavMerge,
         Browser
     };
 

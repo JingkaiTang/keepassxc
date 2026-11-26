@@ -54,6 +54,10 @@
 #include "keeshare/SettingsPageKeeShare.h"
 #include "keys/drivers/YubiKey.h"
 
+#ifdef KPXC_FEATURE_NETWORK
+#include "networking/WebDavSession.h"
+#endif
+
 #ifdef KPXC_FEATURE_UPDATES
 #include "gui/UpdateCheckDialog.h"
 #include "networking/UpdateChecker.h"
@@ -447,6 +451,13 @@ MainWindow::MainWindow()
 
     connect(m_ui->actionDatabaseNew, SIGNAL(triggered()), m_ui->tabWidget, SLOT(newDatabase()));
     connect(m_ui->actionDatabaseOpen, SIGNAL(triggered()), m_ui->tabWidget, SLOT(openDatabase()));
+#ifdef KPXC_FEATURE_NETWORK
+    m_ui->actionDatabaseOpenWebDav->setIcon(icons()->icon("remote-sync"));
+    connect(m_ui->actionDatabaseOpenWebDav, &QAction::triggered, m_ui->tabWidget, &DatabaseTabWidget::openWebDav);
+    connect(m_ui->welcomeWidget, &WelcomeWidget::openWebDav, m_ui->tabWidget, &DatabaseTabWidget::openWebDav);
+#else
+    m_ui->actionDatabaseOpenWebDav->setVisible(false);
+#endif
     connect(m_ui->actionDatabaseSave, SIGNAL(triggered()), m_ui->tabWidget, SLOT(saveDatabase()));
     connect(m_ui->actionDatabaseSaveAs, SIGNAL(triggered()), m_ui->tabWidget, SLOT(saveDatabaseAs()));
     connect(m_ui->actionDatabaseSaveBackup, SIGNAL(triggered()), m_ui->tabWidget, SLOT(saveDatabaseBackup()));
@@ -674,6 +685,12 @@ void MainWindow::restoreConfigState()
     if (config()->get(Config::OpenPreviousDatabasesOnStartup).toBool()) {
         const QStringList fileNames = config()->get(Config::LastOpenedDatabases).toStringList();
         for (const QString& filename : fileNames) {
+#ifdef KPXC_FEATURE_NETWORK
+            if (WebDavSession::isReference(filename)) {
+                openDatabase(filename);
+                continue;
+            }
+#endif
             if (!filename.isEmpty() && QFile::exists(filename)) {
                 openDatabase(filename);
             }
@@ -740,7 +757,13 @@ void MainWindow::updateLastDatabasesMenu()
 
     const QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
     for (const QString& database : lastDatabases) {
-        QAction* action = m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(database));
+        auto label = database;
+#ifdef KPXC_FEATURE_NETWORK
+        if (WebDavSession::isReference(database)) {
+            label = WebDavSession::savedUrl(database).toDisplayString();
+        }
+#endif
+        QAction* action = m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(label));
         action->setData(database);
         m_lastDatabasesActions->addAction(action);
     }
@@ -1219,6 +1242,19 @@ void MainWindow::updateRemoteSyncMenuEntries()
 
     auto dbWidget = m_ui->tabWidget->currentDatabaseWidget();
     if (dbWidget) {
+#ifdef KPXC_FEATURE_NETWORK
+        if (auto* session = dbWidget->webDavSession()) {
+            m_ui->menuRemoteSync->addAction(tr("Retry WebDAV Sync"), session, &WebDavSession::retry);
+            m_ui->menuRemoteSync->addAction(tr("Update WebDAV Login…"), m_ui->tabWidget,
+                                            &DatabaseTabWidget::updateWebDavCredentials);
+            m_ui->menuRemoteSync->addAction(tr("Forget WebDAV Login…"), m_ui->tabWidget,
+                                            &DatabaseTabWidget::forgetWebDavCredentials);
+            if (session->isReadOnly()) {
+                return;
+            }
+            m_ui->menuRemoteSync->addSeparator();
+        }
+#endif
         // Setup sync shortcut
         auto action = m_ui->menuRemoteSync->addAction(tr("Setup Remote Sync…"));
         connect(action, &QAction::triggered, dbWidget, &DatabaseWidget::switchToRemoteSettings);
@@ -1510,7 +1546,7 @@ bool MainWindow::saveLastDatabases()
     if (config()->get(Config::OpenPreviousDatabasesOnStartup).toBool()) {
         auto currentDbWidget = m_ui->tabWidget->currentDatabaseWidget();
         if (currentDbWidget && !currentDbWidget->database()->isTemporaryDatabase()) {
-            config()->set(Config::LastActiveDatabase, currentDbWidget->database()->filePath());
+            config()->set(Config::LastActiveDatabase, currentDbWidget->databaseReference());
         } else {
             config()->remove(Config::LastActiveDatabase);
         }
@@ -1519,7 +1555,7 @@ bool MainWindow::saveLastDatabases()
         for (int i = 0; i < m_ui->tabWidget->count(); ++i) {
             auto dbWidget = m_ui->tabWidget->databaseWidgetFromIndex(i);
             if (!dbWidget->database()->isTemporaryDatabase()) {
-                openDatabases.append(QDir::toNativeSeparators(dbWidget->database()->filePath()));
+                openDatabases.append(QDir::toNativeSeparators(dbWidget->databaseReference()));
             }
         }
 

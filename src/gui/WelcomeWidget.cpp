@@ -23,6 +23,9 @@
 #include "config-keepassx.h"
 #include "core/Config.h"
 #include "gui/Icons.h"
+#ifdef KPXC_FEATURE_NETWORK
+#include "networking/WebDavSession.h"
+#endif
 
 WelcomeWidget::WelcomeWidget(QWidget* parent)
     : QWidget(parent)
@@ -44,6 +47,12 @@ WelcomeWidget::WelcomeWidget(QWidget* parent)
     m_ui->buttonImport->setIcon(icons()->icon("document-import"));
     m_ui->buttonImport->setStyleSheet("text-align:center;");
 
+#ifdef KPXC_FEATURE_NETWORK
+    m_ui->buttonOpenWebDav->setIcon(icons()->icon("remote-sync"));
+    connect(m_ui->buttonOpenWebDav, &QPushButton::clicked, this, &WelcomeWidget::openWebDav);
+#else
+    m_ui->buttonOpenWebDav->hide();
+#endif
     refreshLastDatabases();
 
     connect(m_ui->buttonNewDatabase, SIGNAL(clicked()), SIGNAL(newDatabase()));
@@ -62,7 +71,7 @@ void WelcomeWidget::openDatabaseFromFile(QListWidgetItem* item)
     if (!item || item->text().isEmpty()) {
         return;
     }
-    emit openDatabaseFile(item->text());
+    emit openDatabaseFile(item->data(Qt::UserRole).toString());
 }
 
 void WelcomeWidget::removeFromLastDatabases(QListWidgetItem* item)
@@ -73,7 +82,7 @@ void WelcomeWidget::removeFromLastDatabases(QListWidgetItem* item)
 
     if (config()->get(Config::RememberLastDatabases).toBool()) {
         QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
-        lastDatabases.removeOne(item->text());
+        lastDatabases.removeOne(item->data(Qt::UserRole).toString());
         config()->set(Config::LastDatabases, lastDatabases);
     }
     refreshLastDatabases();
@@ -85,7 +94,12 @@ void WelcomeWidget::refreshLastDatabases()
     const QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
     for (const QString& database : lastDatabases) {
         auto itm = new QListWidgetItem;
+        itm->setData(Qt::UserRole, database);
+#ifdef KPXC_FEATURE_NETWORK
+        itm->setText(WebDavSession::isReference(database) ? WebDavSession::savedUrl(database).toDisplayString() : database);
+#else
         itm->setText(database);
+#endif
         m_ui->recentListWidget->addItem(itm);
     }
 

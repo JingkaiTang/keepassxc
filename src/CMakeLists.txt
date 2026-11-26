@@ -311,6 +311,9 @@ endif()
 
 if(KPXC_FEATURE_NETWORK)
     list(APPEND gui_SOURCES
+            gui/remote/WebDavDialog.cpp
+            networking/WebDavCredentials.cpp
+            networking/WebDavSession.cpp
             networking/HibpDownloader.cpp
             networking/NetworkManager.cpp
             networking/UpdateChecker.cpp
