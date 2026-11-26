@@ -411,6 +411,7 @@ void WebDavSession::finished()
     const auto operation = m_operation;
     const auto loginRevision = m_requestRevision;
     const bool currentLogin = loginRevision == m_credentialsRevision;
+    const bool usedLogin = reply->property("webDavAuthTried").toBool();
     if (!currentLogin) {
         // Login was edited during this transfer. Validate the new choice in its own request.
         QTimer::singleShot(0, this, &WebDavSession::retry);
@@ -467,7 +468,7 @@ void WebDavSession::finished()
         receiveFile(operation, etag);
     }
     // Public reads may succeed without the server ever checking the supplied login.
-    if (currentLogin && m_credentialsRevision == loginRevision && reply->property("webDavAuthTried").toBool()) {
+    if (usedLogin && m_credentialsRevision == loginRevision) {
         emit authenticated();
     }
 }
