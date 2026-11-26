@@ -445,6 +445,16 @@ void WebDavSession::finished()
         stopWithError(tr("The WebDAV download could not be written to disk."));
         return;
     }
+    if (reply->error() == QNetworkReply::SslHandshakeFailedError) {
+        const auto message = tr("Could not establish a trusted HTTPS connection to the WebDAV server.");
+        setStatus(message);
+        if (!m_ready && !databaseHash(localPath()).isEmpty()) {
+            publishReady();
+        } else if (!m_ready) {
+            emit failed(message);
+        }
+        return;
+    }
     if (status == 401) {
         if (!currentLogin) {
             return;
