@@ -37,6 +37,7 @@ private slots:
     void readOnly_data();
     void readOnly();
     void renewCredentials();
+    void anonymousReadDoesNotVerifyLogin();
     void uploadWithoutEtag();
     void rejectedValidator();
     void editCredentialsDuringUpload();

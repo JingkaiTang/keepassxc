@@ -286,6 +286,26 @@ void TestWebDavSession::renewCredentials()
     QCOMPARE(ready.count(), 1);
 }
 
+void TestWebDavSession::anonymousReadDoesNotVerifyLogin()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    session.setCredentials("alice", "write-password");
+    QSignalSpy ready(&session, &WebDavSession::ready);
+    QSignalSpy authenticated(&session, &WebDavSession::authenticated);
+    session.open();
+    QTRY_COMPARE(ready.count(), 1);
+    QCOMPARE(authenticated.count(), 0);
+
+    server.password = "write-password";
+    QVERIFY(commitLocalSave(session.localPath(), m_changed));
+    session.localSaved();
+    QTRY_COMPARE(authenticated.count(), 1);
+    QCOMPARE(server.contents, m_changed);
+}
+
 void TestWebDavSession::uploadWithoutEtag()
 {
     MockWebDavServer server;
