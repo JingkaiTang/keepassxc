@@ -2784,11 +2784,6 @@ This is definitely a bug, please report it to the developers.</source>
         <translation>已从此设备移除保存的 WebDAV 登录信息。</translation>
     </message>
     <message>
-        <source>%1 [%2]</source>
-        <comment>WebDAV database name and synchronization status</comment>
-        <translation>%1 [%2]</translation>
-    </message>
-    <message>
         <source>Opening WebDAV database…</source>
         <translation>正在打开 WebDAV 数据库…</translation>
     </message>
@@ -10949,6 +10944,14 @@ Example: JBSWY3DPEHPK3PXP</source>
     <message>
         <source>Remote changes need to be merged</source>
         <translation>需要合并远端修改</translation>
+    </message>
+    <message>
+        <source>Synced to WebDAV</source>
+        <translation>已同步到 WebDAV</translation>
+    </message>
+    <message>
+        <source>Loaded changes from WebDAV</source>
+        <translation>已从 WebDAV 载入更改</translation>
     </message>
     <message>
         <source>Synced</source>

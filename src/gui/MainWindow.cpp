@@ -666,6 +666,29 @@ MainWindow::MainWindow()
     m_statusBarLabel = new QLabel(statusBar());
     m_statusBarLabel->setObjectName("statusBarLabel");
     statusBar()->addPermanentWidget(m_statusBarLabel);
+#ifdef KPXC_FEATURE_NETWORK
+    m_webDavStatusLabel = new QLabel(statusBar());
+    m_webDavStatusLabel->setObjectName("webDavPendingStatus");
+    m_webDavStatusLabel->setTextFormat(Qt::PlainText);
+    statusBar()->addWidget(m_webDavStatusLabel, 1);
+    connect(m_ui->tabWidget, &DatabaseTabWidget::webDavStatusChanged, this, &MainWindow::updateWebDavStatusBar);
+    connect(m_ui->tabWidget, &DatabaseTabWidget::tabNameChanged, this, &MainWindow::updateWebDavStatusBar);
+    auto changeStatusContext = [this] {
+        statusBar()->clearMessage();
+        updateWebDavStatusBar();
+    };
+    connect(m_ui->tabWidget, &QTabWidget::currentChanged, this, changeStatusContext);
+    connect(m_ui->stackedWidget, &QStackedWidget::currentChanged, this, changeStatusContext);
+    connect(
+        m_ui->tabWidget, &DatabaseTabWidget::webDavNotice, this, [this](DatabaseWidget* widget, const QString& text) {
+            if (!widget
+                || (m_ui->stackedWidget->currentIndex() == DatabaseTabScreen
+                    && widget == m_ui->tabWidget->currentDatabaseWidget() && !widget->isLocked())) {
+                statusBar()->showMessage(text, 3000);
+            }
+        });
+    updateWebDavStatusBar();
+#endif
 
     restoreConfigState();
     updateMenuActionState();
@@ -1055,6 +1078,26 @@ void MainWindow::updateToolbarSeparatorVisibility()
         m_ui->toolbarSeparator->setVisible(false);
     }
 }
+
+#ifdef KPXC_FEATURE_NETWORK
+void MainWindow::updateWebDavStatusBar()
+{
+    auto* widget = m_ui->tabWidget->currentDatabaseWidget();
+    auto* session = m_ui->stackedWidget->currentIndex() == DatabaseTabScreen && widget && !widget->isLocked()
+                        ? widget->webDavSession()
+                        : nullptr;
+    if (m_statusBarSession != session) {
+        statusBar()->clearMessage();
+        m_statusBarSession = session;
+    }
+    const bool pending = session && session->status() == WebDavSession::Status::Pending;
+    if (pending) {
+        statusBar()->clearMessage();
+        m_webDavStatusLabel->setText(session->statusText());
+    }
+    m_webDavStatusLabel->setVisible(pending);
+}
+#endif
 
 void MainWindow::updateWindowTitle()
 {

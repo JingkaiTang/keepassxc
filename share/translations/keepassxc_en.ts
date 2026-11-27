@@ -2746,11 +2746,6 @@ This is definitely a bug, please report it to the developers.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>%1 [%2]</source>
-        <comment>WebDAV database name and synchronization status</comment>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Opening WebDAV database…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10856,6 +10851,14 @@ Example: JBSWY3DPEHPK3PXP</source>
     </message>
     <message>
         <source>Remote changes need to be merged</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Synced to WebDAV</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loaded changes from WebDAV</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

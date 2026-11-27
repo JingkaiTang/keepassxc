@@ -74,6 +74,7 @@
 #include "util/MockWebDavServer.h"
 #include <QScopeGuard>
 #include <QStandardPaths>
+#include <QStatusBar>
 #endif
 
 #define TEST_MODAL_NO_WAIT(TEST_CODE)                                                                                  \
@@ -629,6 +630,7 @@ void TestGui::testWebDavDatabase_data()
     QTest::newRow("download completes during group edit") << false << QString("group") << QByteArray("\"1\"");
     QTest::newRow("remote master key changed") << false << QString("rekey") << QByteArray("\"1\"");
     QTest::newRow("unsaved desktop change") << false << QString("unsaved") << QByteArray("\"1\"");
+    QTest::newRow("sync feedback follows the active tab") << false << QString("status") << QByteArray("\"1\"");
     QTest::newRow("check on unlock") << false << QString("locked") << QByteArray("\"1\"");
 }
 
@@ -694,10 +696,20 @@ void TestGui::testWebDavDatabase()
 
     auto* session = m_dbWidget->webDavSession();
     QVERIFY(session);
+    auto* banner = m_dbWidget->findChild<QWidget*>("webDavAttentionBanner");
+    auto* pending = m_mainWindow->findChild<QLabel*>("webDavPendingStatus");
+    QVERIFY(banner && pending);
     if (initialTag == "bare-1") {
         QTRY_VERIFY(session->canProbeWrites());
         auto* verify = m_dbWidget->findChild<QPushButton*>("webDavVerifyWritesButton");
         QVERIFY(verify && verify->isVisible());
+        server.holdRead = true;
+        session->checkForChanges();
+        QTRY_VERIFY(server.heldRead);
+        QVERIFY(verify->isVisible());
+        QVERIFY(!verify->isEnabled());
+        server.releaseRead();
+        QTRY_VERIFY(verify->isEnabled());
         QVERIFY(m_db->isReadOnly());
         MessageBox::setNextAnswer(MessageBox::Cancel);
         QTest::mouseClick(verify, Qt::LeftButton);
@@ -709,6 +721,7 @@ void TestGui::testWebDavDatabase()
         QVERIFY(server.preconditions.isEmpty());
     }
     QCOMPARE(session->isReadOnly(), readOnly);
+    QTRY_COMPARE(banner->isVisible(), readOnly);
     const QString remoteRef = WebDavSession::referenceFor(server.url(), "alice");
     QCOMPARE(m_dbWidget->databaseReference(), remoteRef);
     QVERIFY(config()->get(Config::LastDatabases).toStringList().contains(remoteRef));
@@ -734,6 +747,38 @@ void TestGui::testWebDavDatabase()
         QVERIFY(newEntry);
         QVERIFY(!newEntry->isEnabled());
         QVERIFY(server.preconditions.isEmpty());
+    } else if (scenario == "status") {
+        auto* bar = m_mainWindow->statusBar();
+        QVERIFY(bar->currentMessage().isEmpty());
+        const auto reads = server.reads.size();
+        session->checkForChanges();
+        QTRY_VERIFY(server.reads.size() > reads);
+        QTRY_COMPARE(session->statusText(), QString("Synced"));
+        QVERIFY(!banner->isVisible());
+        QVERIFY(!pending->isVisible());
+        QVERIFY(bar->currentMessage().isEmpty());
+
+        server.pauseUpload = true;
+        m_db->metadata()->setName("Status test");
+        QVERIFY(m_dbWidget->save());
+        QTRY_COMPARE(server.uploaded.size(), 1);
+        QVERIFY(pending->isVisible());
+        QCOMPARE(m_tabWidget->tabName(0), QString("Status test"));
+        QVERIFY(!m_mainWindow->windowTitle().contains(session->statusText()));
+        QVERIFY(m_tabWidget->tabToolTip(0).contains(session->statusText()));
+        m_tabWidget->addDatabaseTab(m_dbFilePath);
+        QVERIFY(!pending->isVisible());
+        server.releaseUpload();
+        QTRY_COMPARE(session->statusText(), QString("Synced"));
+        QVERIFY(bar->currentMessage().isEmpty());
+        QVERIFY(m_tabWidget->closeCurrentDatabaseTab());
+        QCOMPARE(m_tabWidget->currentDatabaseWidget(), m_dbWidget.data());
+        QVERIFY(bar->currentMessage().isEmpty());
+        m_db->metadata()->setName("Foreground save");
+        QVERIFY(m_dbWidget->save());
+        QTRY_COMPARE(bar->currentMessage(), QString("Synced to WebDAV"));
+        QTRY_VERIFY_WITH_TIMEOUT(bar->currentMessage().isEmpty(), 5000);
+        QVERIFY(!banner->isVisible());
     } else if (!scenario.isEmpty()) {
         checkWebDavMerge(server, scenario);
     } else {
@@ -886,6 +931,9 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server, const QString& scenario
                           Qt::LeftButton);
         triggerAction("actionDatabaseSave");
         QTRY_VERIFY(session->statusText().contains("waiting"));
+        auto* pending = m_mainWindow->findChild<QLabel*>("webDavPendingStatus");
+        QVERIFY(pending && pending->isVisible());
+        QCOMPARE(pending->text(), session->statusText());
         QVERIFY(server.start(port));
         session->retry();
         QTRY_COMPARE(server.uploaded.size(), 1);
@@ -950,7 +998,8 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server, const QString& scenario
     if (conflict) {
         QTRY_VERIFY(session->hasConflict());
         auto* review = m_dbWidget->findChild<QPushButton*>("webDavMergeButton");
-        QVERIFY(review && review->isVisible());
+        QVERIFY(review);
+        QTRY_VERIFY(review->isVisible());
         QTest::mouseClick(review, Qt::LeftButton);
         QDialog* chooser = nullptr;
         QTRY_VERIFY((chooser = m_dbWidget->findChild<QDialog*>("webDavConflicts")) && chooser->isVisible());

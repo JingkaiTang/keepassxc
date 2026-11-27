@@ -138,13 +138,19 @@ void TestWebDavSession::backgroundChecks()
     session.setCredentials("alice", {});
     QSignalSpy ready(&session, &WebDavSession::ready);
     QSignalSpy changed(&session, &WebDavSession::remoteChanged);
+    QSignalSpy notices(&session, &WebDavSession::notice);
     session.open();
     QTRY_COMPARE(ready.count(), 1);
     const auto synced = session.statusText();
+    // A bare ETag keeps its read-only warning throughout the HEAD/GET check.
+    // Its write-verification action becomes available again when the last reply is done.
+    auto checkFinished = [&] {
+        return session.statusText() == synced && (!session.needsWriteVerification() || session.canProbeWrites());
+    };
     session.setChecksEnabled(true);
     session.checkForChanges();
     session.checkForChanges();
-    QTRY_VERIFY(server.reads.size() > 1 && session.statusText() == synced);
+    QTRY_VERIFY(server.reads.size() > 1 && checkFinished());
     if (tag.startsWith('"')) {
         QCOMPARE(server.ifNoneMatch.last(), tag);
         QCOMPARE(server.downloaded, 1);
@@ -152,6 +158,7 @@ void TestWebDavSession::backgroundChecks()
         QCOMPARE(server.downloaded, 2);
     }
     QCOMPARE(changed.count(), 0);
+    QCOMPARE(notices.count(), 0);
 
     server.contents = m_remote;
     if (!tag.startsWith("W/")) {
@@ -164,13 +171,15 @@ void TestWebDavSession::backgroundChecks()
     const auto downloads = server.downloaded;
     const auto requests = server.reads.size();
     session.checkForChanges();
-    QTRY_VERIFY(server.reads.size() > requests && session.statusText() == synced);
+    QTRY_VERIFY(server.reads.size() > requests && checkFinished());
     if (tag == "one" && consistentHead) {
         QCOMPARE(server.reads.last(), QByteArray("HEAD"));
         QCOMPARE(server.downloaded, downloads);
     } else if (!tag.startsWith('"')) {
         QCOMPARE(server.downloaded, downloads + 1);
     }
+    QCOMPARE(notices.count(), 1);
+    QCOMPARE(notices.first().first().toString(), QString("Loaded changes from WebDAV"));
     QCOMPARE(server.probeCreates, 0);
     QVERIFY(server.preconditions.isEmpty());
 }
@@ -265,6 +274,8 @@ void TestWebDavSession::rateLimitedCheck()
     session.checkForChanges();
     QVERIFY(commitLocalSave(session.localPath(), m_changed));
     session.localSaved();
+    QCOMPARE(session.status(), WebDavSession::Status::Pending);
+    QCOMPARE(session.statusText(), QString("Saved locally, waiting to sync"));
     QTest::qWait(50);
     QCOMPARE(server.reads, reads);
     QVERIFY(server.preconditions.isEmpty());

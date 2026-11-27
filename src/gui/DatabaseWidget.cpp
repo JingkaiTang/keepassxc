@@ -369,6 +369,7 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
     m_db->setReadOnly(session && session->isReadOnly());
     if (session) {
         auto* banner = new QWidget(m_mainWidget);
+        banner->setObjectName("webDavAttentionBanner");
         auto* layout = new QHBoxLayout(banner);
         layout->setContentsMargins(0, 0, 0, 0);
         auto* label = new QLabel(banner);
@@ -384,11 +385,13 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
         static_cast<QVBoxLayout*>(m_mainWidget->layout())->insertWidget(0, banner);
         m_webDavBanner = banner;
 
-        auto refresh = [this, session, label, merge, verify] {
+        auto refresh = [this, session, banner, label, merge, verify] {
             m_db->setReadOnly(session->isReadOnly());
             label->setText(session->statusText());
-            verify->setVisible(session->canProbeWrites());
+            verify->setVisible(session->needsWriteVerification());
+            verify->setEnabled(session->canProbeWrites());
             merge->setVisible(session->hasConflict());
+            banner->setVisible(session->status() == WebDavSession::Status::NeedsAttention);
         };
         connect(session, &WebDavSession::statusChanged, banner, refresh);
         m_webDavSync = new WebDavSync(this, session, banner);

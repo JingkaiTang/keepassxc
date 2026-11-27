@@ -115,6 +115,10 @@ signals:
     void tabVisibilityChanged(bool tabsVisible);
     void messageGlobal(const QString&, MessageWidget::MessageType type);
     void messageDismissGlobal();
+#ifdef KPXC_FEATURE_NETWORK
+    void webDavStatusChanged();
+    void webDavNotice(DatabaseWidget* widget, const QString& message);
+#endif
     void databaseUnlockDialogFinished(bool accepted, DatabaseWidget* dbWidget);
 
 private slots:
@@ -125,6 +129,7 @@ private slots:
     void handleExportError(const QString& reason);
 
 private:
+    void updateTabToolTip(int index, DatabaseWidget* dbWidget);
     QSharedPointer<Database> execNewDatabaseWizard();
     void updateLastDatabases(DatabaseWidget* widget);
 #ifdef KPXC_FEATURE_NETWORK

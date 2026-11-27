@@ -23,6 +23,12 @@ class WebDavSession : public QObject
 {
     Q_OBJECT
 public:
+    enum class Status
+    {
+        Normal,
+        Pending,
+        NeedsAttention
+    };
     WebDavSession(const QString& reference, const QUrl& url, QObject* parent = nullptr);
     ~WebDavSession() override;
     static QString referenceFor(const QUrl& url, const QString& user);
@@ -34,6 +40,7 @@ public:
     QString reference() const;
     QUrl url() const;
     QString localPath() const;
+    Status status() const;
     QString statusText() const;
     bool isReadOnly() const;
     bool hasConflict() const;
@@ -42,6 +49,7 @@ public:
     void setCredentials(const QString& user, const QString& password);
     void open();
     void localSaved();
+    bool needsWriteVerification() const;
     bool canProbeWrites() const;
     void probeWrites();
     void retry();
@@ -63,6 +71,7 @@ signals:
     void ready();
     void remoteChanged(const QString& path);
     void statusChanged();
+    void notice(const QString& message);
     void authenticated();
     void authenticationRequired();
     void failed(const QString& message);
@@ -86,7 +95,7 @@ private:
     void prepareNetwork();
     void startCheck();
     bool record(const QByteArray& etag, const QByteArray& base, const QByteArray& attempt = {});
-    void setStatus(const QString& message);
+    void setStatus(Status status, const QString& message);
     void publishReady();
     void request(Operation operation);
     QString bareProofPath() const;
@@ -95,14 +104,15 @@ private:
     void readResponse();
     void finished();
     void receiveFile(Operation operation, const QByteArray& etag);
-    void continueSaving();
+    void continueSaving(bool uploadConfirmed = false);
     void retryLater(const QString& message);
     void stopWithError(const QString& message);
 
     QString m_reference;
     QUrl m_url;
     QString m_directory;
-    QString m_status;
+    Status m_status = Status::Normal;
+    QString m_statusText;
     QString m_user;
     QString m_password;
     bool m_credentialsSet = false;

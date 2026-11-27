@@ -240,7 +240,10 @@ void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* logi
         if (connection.widget) {
             int index = indexOf(connection.widget);
             if (index >= 0) {
-                updateTabName(index);
+                updateTabToolTip(index, connection.widget);
+                if (index == currentIndex()) {
+                    emit webDavStatusChanged();
+                }
             }
         } else if (connection.ready && !session->hasPendingUpload()) {
             // The final reply can still confirm an updated login after publishing "Synced".
@@ -253,8 +256,13 @@ void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* logi
         }
     });
 
+    connect(session, &WebDavSession::notice, this, [this, session](const QString& message) {
+        if (auto* widget = m_webDavConnections.value(session->reference()).widget.data()) {
+            emit webDavNotice(widget, message);
+        }
+    });
     if (!inBackground) {
-        emit messageGlobal(tr("Opening WebDAV database…"), MessageWidget::Information);
+        emit webDavNotice(nullptr, tr("Opening WebDAV database…"));
     }
     if (login) {
         applyWebDavLogin(session, login);
@@ -398,12 +406,12 @@ void DatabaseTabWidget::forgetWebDavCredentials()
     runWebDavCredentialTask(
         session,
         [reference] { return WebDavCredentials::remove(reference); },
-        [this](WebDavConnection&, WebDavCredentials::Result result) {
+        [this](WebDavConnection& current, WebDavCredentials::Result result) {
             if (result == WebDavCredentials::Result::Unavailable) {
                 emit messageGlobal(tr("The system credential store could not remove the WebDAV login."),
                                    MessageWidget::Error);
-            } else {
-                emit messageGlobal(tr("Saved WebDAV login removed from this device."), MessageWidget::Positive);
+            } else if (current.widget) {
+                emit webDavNotice(current.widget, tr("Saved WebDAV login removed from this device."));
             }
         });
 }
@@ -957,11 +965,6 @@ QString DatabaseTabWidget::tabName(int index)
     }
 
     auto tabName = dbWidget->displayName();
-#ifdef KPXC_FEATURE_NETWORK
-    if (auto session = dbWidget->webDavSession()) {
-        tabName = tr("%1 [%2]", "WebDAV database name and synchronization status").arg(tabName, session->statusText());
-    }
-#endif
 
     if (dbWidget->isLocked()) {
         tabName = tr("%1 [Locked]", "Database tab name modifier").arg(tabName);
@@ -995,13 +998,7 @@ void DatabaseTabWidget::updateTabName(int index)
     }
     index = indexOf(dbWidget);
     setTabText(index, Tools::escapeAccelerators(tabName(index)));
-    auto tooltip = dbWidget->displayFilePath();
-#ifdef KPXC_FEATURE_NETWORK
-    if (auto session = dbWidget->webDavSession()) {
-        tooltip += "\n" + session->statusText();
-    }
-#endif
-    setTabToolTip(index, tooltip);
+    updateTabToolTip(index, dbWidget);
     auto iconIndex = dbWidget->database()->publicIcon();
     if (iconIndex >= 0 && iconIndex < databaseIcons()->count()) {
         setTabIcon(index, databaseIcons()->icon(iconIndex));
@@ -1009,6 +1006,17 @@ void DatabaseTabWidget::updateTabName(int index)
         setTabIcon(index, {});
     }
     emit tabNameChanged();
+}
+
+void DatabaseTabWidget::updateTabToolTip(int index, DatabaseWidget* dbWidget)
+{
+    auto tooltip = dbWidget->displayFilePath();
+#ifdef KPXC_FEATURE_NETWORK
+    if (auto session = dbWidget->webDavSession()) {
+        tooltip += "\n" + session->statusText();
+    }
+#endif
+    setTabToolTip(index, tooltip);
 }
 
 DatabaseWidget* DatabaseTabWidget::databaseWidgetFromIndex(int index) const
