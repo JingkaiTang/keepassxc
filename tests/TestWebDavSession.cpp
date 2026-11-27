@@ -141,11 +141,23 @@ void TestWebDavSession::consecutiveSaves()
     QCOMPARE(server.preconditions, QList<QByteArray>({"\"1\"", "\"2\""}));
 }
 
+void TestWebDavSession::conflictAndMerge_data()
+{
+    QTest::addColumn<bool>("fixedWeakTag");
+    QTest::newRow("strong version changed") << false;
+    QTest::newRow("remote bytes changed under identical weak tag") << true;
+}
+
 void TestWebDavSession::conflictAndMerge()
 {
+    QFETCH(bool, fixedWeakTag);
     MockWebDavServer server;
     QVERIFY(server.start());
     server.contents = m_original;
+    if (fixedWeakTag) {
+        server.etag = "W/\"1\"";
+        server.supportsLock = true;
+    }
     WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
     session.setCredentials("alice", {});
     QSignalSpy ready(&session, &WebDavSession::ready);
@@ -153,13 +165,21 @@ void TestWebDavSession::conflictAndMerge()
     QTRY_COMPARE(ready.count(), 1);
 
     server.contents = m_remote;
-    server.etag = "\"phone\"";
+    if (!fixedWeakTag) {
+        server.etag = "\"phone\"";
+    }
+    const auto latestTag = server.etag;
     QVERIFY(commitLocalSave(session.localPath(), m_changed));
     session.localSaved();
     QTRY_VERIFY(session.hasConflict());
     QCOMPARE(readFile(session.localPath()), m_changed);
     QCOMPARE(server.contents, m_remote);
-    QCOMPARE(server.preconditions, QList<QByteArray>({"\"1\""}));
+    if (fixedWeakTag) {
+        QVERIFY(server.preconditions.isEmpty());
+        QCOMPARE(server.unlocks, 1);
+    } else {
+        QCOMPARE(server.preconditions, QList<QByteArray>({"\"1\""}));
+    }
 
     QSignalSpy mergeReady(&session, &WebDavSession::mergeReady);
     session.fetchForMerge();
@@ -170,7 +190,13 @@ void TestWebDavSession::conflictAndMerge()
     session.localSaved();
     QVERIFY(session.acceptMergeBase());
     QTRY_COMPARE(server.contents, m_original);
-    QCOMPARE(server.preconditions, QList<QByteArray>({"\"1\"", "\"phone\""}));
+    QTRY_VERIFY(!session.hasPendingUpload());
+    QCOMPARE(server.preconditions.last(), latestTag);
+    if (fixedWeakTag) {
+        QCOMPARE(server.lockedReads, 2);
+        QCOMPARE(server.unlocks, 2);
+        QCOMPARE(server.preconditions.size(), 1);
+    }
 }
 
 void TestWebDavSession::offlineRecovery()
@@ -242,7 +268,11 @@ void TestWebDavSession::readOnly_data()
 {
     QTest::addColumn<QByteArray>("etag");
     QTest::newRow("missing") << QByteArray();
-    QTest::newRow("weak") << QByteArray("W/\"1\"");
+    QTest::newRow("wildcard") << QByteArray("*");
+    QTest::newRow("list") << QByteArray("\"a\", \"b\"");
+    QTest::newRow("bare list") << QByteArray("a,b");
+    QTest::newRow("broken weak tag") << QByteArray("W/a");
+    QTest::newRow("unmatched quote") << QByteArray("\"a");
 }
 
 void TestWebDavSession::readOnly()
@@ -260,6 +290,125 @@ void TestWebDavSession::readOnly()
     QVERIFY(session.isReadOnly());
     QCOMPARE(readFile(session.localPath()), m_original);
     QCOMPARE(server.preconditions.size(), 0);
+}
+
+void TestWebDavSession::bareWrites_data()
+{
+    QTest::addColumn<bool>("ignoresStale");
+    QTest::newRow("bare If-Match enforced") << false;
+    QTest::newRow("bare If-Match ignored") << true;
+}
+
+void TestWebDavSession::bareWrites()
+{
+    QFETCH(bool, ignoresStale);
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    server.etag = "bare-1";
+    server.uploadEtagOverride = "\"put-response\"";
+    server.ignoreStaleProbe = ignoresStale;
+    const auto reference = WebDavSession::referenceFor(server.url(), "alice");
+    {
+        WebDavSession session(reference, server.url());
+        session.setCredentials("alice", {});
+        QSignalSpy ready(&session, &WebDavSession::ready);
+        session.open();
+        QTRY_COMPARE(ready.count(), 1);
+        QVERIFY(session.isReadOnly());
+        QVERIFY(session.canProbeWrites());
+        QCOMPARE(server.probeCreates, 0);
+        session.probeWrites();
+        QTRY_COMPARE(server.probeDeletes, 1);
+        QTRY_VERIFY(session.canProbeWrites() || !session.isReadOnly());
+        QCOMPARE(session.isReadOnly(), ignoresStale);
+        QCOMPARE(server.probeMatches, QList<QByteArray>({"test-1", "test-1"}));
+        QCOMPARE(server.contents, m_original);
+        QVERIFY(server.preconditions.isEmpty());
+        if (ignoresStale) {
+            return;
+        }
+        QVERIFY(commitLocalSave(session.localPath(), m_changed));
+        session.localSaved();
+        QTRY_COMPARE(server.contents, m_changed);
+        QTRY_VERIFY(!session.hasPendingUpload());
+        QCOMPARE(server.preconditions, QList<QByteArray>({"bare-1"}));
+        // A different PUT response format must not replace the authoritative bare GET tag.
+        const auto accepted = server.etag;
+        server.contents = m_remote;
+        server.etag = "from-phone";
+        QVERIFY(commitLocalSave(session.localPath(), m_original));
+        session.localSaved();
+        QTRY_VERIFY(session.hasConflict());
+        QCOMPARE(server.contents, m_remote);
+        QCOMPARE(readFile(session.localPath()), m_original);
+        QCOMPARE(server.preconditions.last(), accepted);
+    }
+    const auto checkScope = [](const QUrl& url, const QString& user, bool readOnly) {
+        WebDavSession session(WebDavSession::referenceFor(url, user), url);
+        session.setCredentials(user, {});
+        QSignalSpy ready(&session, &WebDavSession::ready);
+        session.open();
+        QTRY_COMPARE(ready.count(), 1);
+        QCOMPARE(session.isReadOnly(), readOnly);
+    };
+    checkScope(server.url(), "alice", false);
+    checkScope(server.url().resolved(QUrl("sibling.kdbx")), "alice", false);
+    checkScope(server.url(), "bob", true);
+    checkScope(server.url().resolved(QUrl("other/vault.kdbx")), "alice", true);
+    QCOMPARE(server.probeCreates, 1);
+}
+
+void TestWebDavSession::weakWrites_data()
+{
+    QTest::addColumn<bool>("supportsLock");
+    QTest::addColumn<bool>("shared");
+    QTest::addColumn<bool>("rejectsMatch");
+    QTest::newRow("exclusive lock and weak If-Match") << true << false << false;
+    QTest::newRow("server rejects weak If-Match") << true << false << true;
+    QTest::newRow("exclusive lock unavailable") << false << false << false;
+    QTest::newRow("server grants shared lock") << true << true << false;
+}
+
+void TestWebDavSession::weakWrites()
+{
+    QFETCH(bool, supportsLock);
+    QFETCH(bool, shared);
+    QFETCH(bool, rejectsMatch);
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    server.etag = "W/\"opaque,1\"";
+    server.supportsLock = supportsLock;
+    server.sharedLock = shared;
+    server.rejectConditionalWrites = rejectsMatch;
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    session.setCredentials("alice", {});
+    QSignalSpy ready(&session, &WebDavSession::ready);
+    session.open();
+    QTRY_COMPARE(ready.count(), 1);
+    QVERIFY(!session.isReadOnly());
+    QCOMPARE(server.locks, 0);
+    QVERIFY(commitLocalSave(session.localPath(), m_changed));
+    session.localSaved();
+    if (supportsLock && !shared && !rejectsMatch) {
+        QTRY_COMPARE(server.contents, m_changed);
+        QTRY_VERIFY(!session.hasPendingUpload());
+    } else {
+        QTRY_VERIFY(session.isReadOnly());
+        QCOMPARE(server.contents, m_original);
+        QCOMPARE(readFile(session.localPath()), m_changed);
+    }
+    QCOMPARE(server.locks, supportsLock ? 1 : 0);
+    QCOMPARE(server.unlocks, server.locks);
+    QVERIFY(!server.locked);
+    if (supportsLock && !shared) {
+        QCOMPARE(server.lockedReads, 1);
+        QCOMPARE(server.preconditions, QList<QByteArray>({server.etag}));
+        QCOMPARE(server.putLocks, QList<QByteArray>({'(' + server.token + ')'}));
+    } else {
+        QVERIFY(server.preconditions.isEmpty());
+    }
 }
 
 void TestWebDavSession::renewCredentials()

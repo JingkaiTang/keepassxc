@@ -159,6 +159,13 @@ void TestGui::init()
     auto* editPassword =
         databaseOpenWidget->findChild<PasswordWidget*>("editPassword")->findChild<QLineEdit*>("passwordEdit");
     QVERIFY(editPassword);
+#ifdef Q_OS_MACOS
+    // Cocoa can defer foreground activation in a background test session. Give Qt's
+    // synthetic key events the same active window without changing system focus.
+    if (!m_mainWindow->isActiveWindow()) {
+        QApplication::setActiveWindow(m_mainWindow.data());
+    }
+#endif
     editPassword->setFocus();
     QTRY_VERIFY(editPassword->hasFocus());
 
@@ -607,15 +614,19 @@ void TestGui::testWebDavDatabase_data()
 {
     QTest::addColumn<bool>("readOnly");
     QTest::addColumn<bool>("remoteChanged");
-    QTest::newRow("save and upload") << false << false;
-    QTest::newRow("server without version information") << true << false;
-    QTest::newRow("merge desktop and mobile edits") << false << true;
+    QTest::addColumn<QByteArray>("initialTag");
+    QTest::newRow("save and upload") << false << false << QByteArray("\"1\"");
+    QTest::newRow("server without version information") << true << false << QByteArray();
+    QTest::newRow("verify bare ETag then save") << false << false << QByteArray("bare-1");
+    QTest::newRow("merge desktop and mobile edits") << false << true << QByteArray("\"1\"");
+    QTest::newRow("merge with unchanged weak ETag") << false << true << QByteArray("W/\"1\"");
 }
 
 void TestGui::testWebDavDatabase()
 {
     QFETCH(bool, readOnly);
     QFETCH(bool, remoteChanged);
+    QFETCH(QByteArray, initialTag);
     cleanup();
     const bool wasTestMode = QStandardPaths::isTestModeEnabled();
     const QString appName = QCoreApplication::applicationName();
@@ -638,9 +649,8 @@ void TestGui::testWebDavDatabase()
     QVERIFY(original.open(QIODevice::ReadOnly));
     server.contents = original.readAll();
     server.password = "server-password";
-    if (readOnly) {
-        server.etag.clear();
-    }
+    server.etag = initialTag;
+    server.supportsLock = initialTag.startsWith("W/");
     QVERIFY(server.start());
     QSslConfiguration::setDefaultConfiguration(server.trustedConfiguration());
 
@@ -676,6 +686,19 @@ void TestGui::testWebDavDatabase()
 
     auto* session = m_dbWidget->webDavSession();
     QVERIFY(session);
+    if (session->canProbeWrites()) {
+        auto* verify = m_dbWidget->findChild<QPushButton*>("webDavVerifyWritesButton");
+        QVERIFY(verify && verify->isVisible());
+        QVERIFY(m_db->isReadOnly());
+        MessageBox::setNextAnswer(MessageBox::Cancel);
+        QTest::mouseClick(verify, Qt::LeftButton);
+        QCOMPARE(server.probeCreates, 0);
+        MessageBox::setNextAnswer(MessageBox::Yes);
+        QTest::mouseClick(verify, Qt::LeftButton);
+        QTRY_VERIFY(!m_db->isReadOnly());
+        QCOMPARE(server.probeDeletes, 1);
+        QVERIFY(server.preconditions.isEmpty());
+    }
     QCOMPARE(session->isReadOnly(), readOnly);
     const QString remoteRef = WebDavSession::referenceFor(server.url(), "alice");
     QCOMPARE(m_dbWidget->databaseReference(), remoteRef);
@@ -757,7 +780,10 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server)
     QVERIFY(mobileCopy.open(QIODevice::ReadOnly));
     const QByteArray mobileContents = mobileCopy.readAll();
     server.contents = mobileContents;
-    server.etag = "\"mobile\"";
+    if (!server.supportsLock) {
+        server.etag = "\"mobile\"";
+    }
+    const auto mobileTag = server.etag;
 
     const auto desktopEntry = addEntry(m_db.data(), "Desktop entry");
     QTRY_VERIFY(m_tabWidget->tabText(m_tabWidget->currentIndex()).endsWith("*"));
@@ -776,7 +802,12 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server)
     QVERIFY(buttons);
     QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
     QTRY_COMPARE(server.uploaded.count(), 1);
-    QCOMPARE(server.preconditions.last(), QByteArray("\"mobile\""));
+    QCOMPARE(server.preconditions.last(), mobileTag);
+    if (server.supportsLock) {
+        QTRY_COMPARE(server.unlocks, 2);
+        QCOMPARE(server.lockedReads, 2);
+        QCOMPARE(server.preconditions.size(), 1);
+    }
     QTRY_VERIFY(!m_dbWidget->webDavSession()->hasConflict());
 
     TemporaryFile resultFile;

@@ -64,7 +64,20 @@ public:
     QByteArray password;
     bool pauseUpload = false;
     bool omitUploadEtag = false;
+    QByteArray uploadEtagOverride;
     bool rejectConditionalWrites = false;
+    bool ignoreStaleProbe = false;
+    int probeCreates = 0;
+    int probeDeletes = 0;
+    QList<QByteArray> probeMatches;
+    bool supportsLock = false;
+    bool sharedLock = false;
+    bool locked = false;
+    int locks = 0;
+    int unlocks = 0;
+    int lockedReads = 0;
+    QList<QByteArray> putLocks;
+    const QByteArray token = "<opaquelocktoken:local-test>";
     QList<QByteArray> uploaded;
     QList<QByteArray> preconditions;
 
@@ -99,24 +112,54 @@ protected:
             if (buffer.size() - offset - 4 < length) {
                 return;
             }
-            const auto method = lines.first().split(' ').first();
+            const auto request = lines.first().split(' ');
+            const auto method = request.first();
+            const auto path = request.value(1);
+            const auto body = buffer.mid(offset + 4, length);
             if (!password.isEmpty() && headers.value("authorization") != "Basic " + ("alice:" + password).toBase64()) {
                 respond(socket, "401 Unauthorized", {}, "WWW-Authenticate: Basic realm=\"WebDAV test\"\r\n");
+            } else if (path.contains("/keepassxc-write-test-")) {
+                handleProbe(socket, method, path, headers, body);
+            } else if (method == "LOCK" && supportsLock) {
+                if (locked || headers.value("if-match") != "*" || headers.value("depth") != "0") {
+                    respond(socket, "423 Locked");
+                    return;
+                }
+                locked = true;
+                ++locks;
+                const QByteArray scope = sharedLock ? "<d:shared/>" : "<d:exclusive/>";
+                const auto xml = "<d:prop xmlns:d=\"DAV:\"><d:lockdiscovery><d:activelock><d:lockscope>" + scope
+                    + "</d:lockscope><d:locktype><d:write/></d:locktype><d:locktoken><d:href>"
+                    + token.mid(1, token.size() - 2) + "</d:href></d:locktoken></d:activelock></d:lockdiscovery></d:prop>";
+                respond(socket, "200 OK", xml, "Lock-Token: " + token + "\r\n");
+            } else if (method == "UNLOCK" && locked && headers.value("lock-token") == token) {
+                locked = false;
+                ++unlocks;
+                respond(socket, "204 No Content");
             } else if (method == "GET" || method == "HEAD") {
+                if (locked && headers.value("if") == '(' + token + ')') {
+                    ++lockedReads;
+                }
                 respond(socket, "200 OK", method == "GET" ? contents : QByteArray(), etagHeader());
             } else if (method == "PUT") {
                 preconditions.append(headers.value("if-match"));
-                if (rejectConditionalWrites || etag.isEmpty() || preconditions.last() != etag) {
+                putLocks.append(headers.value("if"));
+                if (rejectConditionalWrites || etag.isEmpty() || preconditions.last() != etag
+                    || (supportsLock && (!locked || putLocks.last() != '(' + token + ')'))) {
                     respond(socket, "412 Precondition Failed");
                     return;
                 }
                 contents = buffer.mid(offset + 4, length);
                 uploaded.append(contents);
-                etag = "\"" + QByteArray::number(++version) + "\"";
+                if (!etag.startsWith("W/")) {
+                    const auto next = QByteArray::number(++version);
+                    etag = etag.startsWith('"') ? '"' + next + '"' : next;
+                }
                 if (pauseUpload) {
                     pausedSocket = socket;
                 } else {
-                    respond(socket, "204 No Content", {}, omitUploadEtag ? QByteArray() : etagHeader());
+                    const auto tag = uploadEtagOverride.isEmpty() ? etagHeader() : "ETag: " + uploadEtagOverride + "\r\n";
+                    respond(socket, "204 No Content", {}, omitUploadEtag ? QByteArray() : tag);
                 }
             } else {
                 respond(socket, "405 Method Not Allowed");
@@ -126,6 +169,41 @@ protected:
     }
 
 private:
+    void handleProbe(QSslSocket* socket, const QByteArray& method, const QByteArray& path,
+                     const QHash<QByteArray, QByteArray>& headers, const QByteArray& body)
+    {
+        if (method == "PUT" && headers.value("if-none-match") == "*" && probePath.isEmpty()) {
+            ++probeCreates;
+            probePath = path;
+            probeBody = body;
+            probeVersion = 1;
+            respond(socket, "201 Created");
+        } else if (probePath != path) {
+            respond(socket, "404 Not Found");
+        } else if (method == "GET") {
+            respond(socket, "200 OK", probeBody, "ETag: test-" + QByteArray::number(probeVersion) + "\r\n");
+        } else if (method == "PUT") {
+            probeMatches.append(headers.value("if-match"));
+            if (probeMatches.last() != "test-" + QByteArray::number(probeVersion) && !ignoreStaleProbe) {
+                respond(socket, "412 Precondition Failed");
+                return;
+            }
+            probeBody = body;
+            ++probeVersion;
+            respond(socket, "204 No Content");
+        } else if (method == "DELETE") {
+            ++probeDeletes;
+            probePath.clear();
+            respond(socket, "204 No Content");
+        } else {
+            respond(socket, "405 Method Not Allowed");
+        }
+    }
+
+    QByteArray probePath;
+    QByteArray probeBody;
+    int probeVersion = 0;
+
     static QByteArray fixture(const QString& name)
     {
         QFile file(QStringLiteral(KEEPASSX_TEST_DATA_DIR "/webdav/") + name);

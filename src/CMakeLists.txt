@@ -313,6 +313,7 @@ if(KPXC_FEATURE_NETWORK)
     list(APPEND gui_SOURCES
             gui/remote/WebDavDialog.cpp
             networking/WebDavCredentials.cpp
+            networking/WebDavWrite.cpp
             networking/WebDavSession.cpp
             networking/HibpDownloader.cpp
             networking/NetworkManager.cpp

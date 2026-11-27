@@ -2796,6 +2796,18 @@ This is definitely a bug, please report it to the developers.</source>
 <context>
     <name>DatabaseWidget</name>
     <message>
+        <source>Verify conditional writes…</source>
+        <translation>验证条件写入…</translation>
+    </message>
+    <message>
+        <source>Verify conditional writes</source>
+        <translation>验证条件写入</translation>
+    </message>
+    <message>
+        <source>Create, update and delete a temporary file in this WebDAV folder to check that the server rejects outdated writes?</source>
+        <translation>将在此 WebDAV 文件夹中创建、更新并删除一个临时文件，以验证服务器会拒绝过期版本的写入。是否继续？</translation>
+    </message>
+    <message>
         <source>Searches and Tags</source>
         <translation>搜索与标签</translation>
     </message>
@@ -10723,6 +10735,38 @@ Example: JBSWY3DPEHPK3PXP</source>
 </context>
 <context>
     <name>WebDavSession</name>
+    <message>
+        <source>Write verification could not clean up the temporary file: %1</source>
+        <translation>写入验证未能清理临时文件 %1。</translation>
+    </message>
+    <message>
+        <source>Read-only: the server did not pass conditional write verification.</source>
+        <translation>只读：服务器未通过条件写入验证。</translation>
+    </message>
+    <message>
+        <source>Verifying conditional writes with a temporary file…</source>
+        <translation>正在使用临时文件验证条件写入…</translation>
+    </message>
+    <message>
+        <source>Could not confirm release of the WebDAV lock. The local copy is preserved.</source>
+        <translation>尚未确认 WebDAV 锁已释放。本地副本已保留。</translation>
+    </message>
+    <message>
+        <source>Checking the remote database under an exclusive lock…</source>
+        <translation>已请求独占锁，正在核对远端数据库…</translation>
+    </message>
+    <message>
+        <source>Read-only: the server could not protect this write. Local changes are preserved.</source>
+        <translation>只读：服务器无法保护此次写入。本地修改已保留。</translation>
+    </message>
+    <message>
+        <source>Read-only until conditional writes are verified for this folder and account.</source>
+        <translation>只读：请先验证此账号在当前文件夹中的条件写入。</translation>
+    </message>
+    <message>
+        <source>Read-only: the server did not provide a usable ETag.</source>
+        <translation>只读：服务器未提供可用的 ETag。</translation>
+    </message>
     <message>
         <source>Enter a full HTTPS database URL without credentials, a query or a fragment.</source>
         <translation>请输入完整的 HTTPS 数据库地址，地址中不能包含登录信息、查询参数或片段标识。</translation>

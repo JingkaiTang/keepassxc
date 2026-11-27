@@ -31,11 +31,16 @@ private slots:
     void connectionReferences();
     void recentDisplayNames();
     void consecutiveSaves();
+    void conflictAndMerge_data();
     void conflictAndMerge();
     void offlineRecovery();
     void interruptedUpload();
     void readOnly_data();
     void readOnly();
+    void bareWrites_data();
+    void bareWrites();
+    void weakWrites_data();
+    void weakWrites();
     void renewCredentials();
     void anonymousReadDoesNotVerifyLogin();
     void uploadWithoutEtag();

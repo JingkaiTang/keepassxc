@@ -428,7 +428,13 @@ _Remember login on this device_ saves the WebDAV login in the current user's sys
 
 Manual and automatic saves first commit an encrypted working copy on this device. _Synced_ means the server has confirmed the latest save. While offline, keep working with the encrypted copy; pending saves survive restarting KeePassXC. _Save Database As…_ switches the tab to a local file, and _Save Database Backup…_ writes a separate copy.
 
-When another device has changed the database, choose _Merge WebDAV Changes…_ to review the changes before uploading, or save a local copy. Servers must support a strong ETag and conditional writes for automatic synchronization. A database without a strong ETag opens read-only.
+When another device has changed the database, choose _Merge WebDAV Changes…_ to review the changes before uploading, or save a local copy. KeePassXC sends the server's version tag (ETag) back with each database update.
+
+* A quoted ETag supports standard conditional writes.
+* For an unquoted ETag, select _Verify conditional writes…_. With your confirmation, KeePassXC creates and removes a temporary file in the same folder. It checks that the server accepts the current version and rejects an outdated one. A successful check enables writes for this account and folder.
+* For a weak ETag, KeePassXC requests an exclusive WebDAV lock and compares the remote database bytes with the last synchronized copy before uploading. If the server cannot supply the lock or rejects its own unchanged tag, KeePassXC preserves your local edits and switches to read-only. You can keep the edited database using _Save Database As…_.
+
+A database with a missing or malformed ETag opens read-only.
 
 === Sync with remote database
 Open the remote sync settings via _Database > Database Settings… > Remote_ to create commands to sync a local database or a temporary local copy of a remote database.

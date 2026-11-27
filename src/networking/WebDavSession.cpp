@@ -4,12 +4,16 @@
  */
 
 #include "WebDavSession.h"
+#include "WebDavWrite.h"
 #include "format/KeePass2.h"
 
 #include <QAuthenticator>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QFutureWatcher>
+#include <QtConcurrentRun>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLockFile>
@@ -50,22 +54,6 @@ namespace
             url.setPort(-1);
         }
         return url.adjusted(QUrl::NormalizePathSegments);
-    }
-
-    QByteArray strongEtag(const QByteArray& header)
-    {
-        const auto tag = header.trimmed();
-        if (tag.size() < 2 || tag.front() != '"' || tag.back() != '"') {
-            return {};
-        }
-        // RFC 9110 entity-tag opaque values exclude spaces, double quotes and control characters.
-        for (qsizetype i = 1; i < tag.size() - 1; ++i) {
-            const auto ch = static_cast<unsigned char>(tag.at(i));
-            if (ch < 0x21 || ch == '"' || ch == 0x7f) {
-                return {};
-            }
-        }
-        return tag;
     }
 
     QByteArray databaseHash(QFile& file)
@@ -118,6 +106,9 @@ WebDavSession::WebDavSession(const QString& reference, const QUrl& url, QObject*
 
 WebDavSession::~WebDavSession()
 {
+    if (m_workerCanceled) {
+        *m_workerCanceled = true;
+    }
     if (m_reply) {
         disconnect(m_reply, nullptr, this, nullptr);
         m_reply->abort();
@@ -202,7 +193,59 @@ QString WebDavSession::statusText() const
 }
 bool WebDavSession::isReadOnly() const
 {
-    return m_etag.isEmpty() && !m_baseHash.isEmpty();
+    if (m_baseHash.isEmpty()) {
+        return false;
+    }
+    return m_etag.isEmpty() || m_etag == m_disabledTag
+           || (WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare && !m_bareVerified);
+}
+
+QString WebDavSession::bareProofPath() const
+{
+    const auto scope = m_url.adjusted(QUrl::RemoveFilename).toEncoded() + '\0' + m_user.toUtf8();
+    const auto key = QCryptographicHash::hash(scope, QCryptographicHash::Sha256).toHex();
+    return QFileInfo(m_directory).dir().filePath("bare-v1-" + QString::fromLatin1(key));
+}
+
+bool WebDavSession::canProbeWrites() const
+{
+    return m_ready && m_credentialsSet && !m_workerCanceled && !m_reply && !m_bareVerified
+           && WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare;
+}
+
+void WebDavSession::probeWrites()
+{
+    if (!canProbeWrites()) {
+        return;
+    }
+    m_retryTimer.stop();
+    m_workerCanceled = std::make_shared<std::atomic_bool>(false);
+    const WebDavWrite::Connection login{m_url, m_user, m_password, m_workerCanceled};
+    auto* watcher = new QFutureWatcher<WebDavWrite::ProbeResult>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
+        const auto result = watcher->result();
+        const auto canceled = m_workerCanceled->load();
+        m_workerCanceled.reset();
+        watcher->deleteLater();
+        if (!result.leftover.isEmpty()) {
+            setStatus(tr("Write verification could not clean up the temporary file: %1").arg(result.leftover));
+        } else if (canceled) {
+            retry();
+        } else if (!result.passed) {
+            setStatus(tr("Read-only: the server did not pass conditional write verification."));
+        } else {
+            QSaveFile proof(bareProofPath());
+            if (!proof.open(QIODevice::WriteOnly) || proof.write("verified") != 8 || !proof.commit()) {
+                setStatus(tr("Could not save the WebDAV synchronization state."));
+                return;
+            }
+            m_bareVerified = true;
+            m_disabledTag.clear();
+            request(Operation::Verify);
+        }
+    });
+    watcher->setFuture(QtConcurrent::run(WebDavWrite::probeBare, login));
+    setStatus(tr("Verifying conditional writes with a temporary file…"));
 }
 bool WebDavSession::hasConflict() const
 {
@@ -215,11 +258,16 @@ bool WebDavSession::hasPendingUpload() const
 
 void WebDavSession::setCredentials(const QString& user, const QString& password)
 {
+    if (m_workerCanceled) {
+        *m_workerCanceled = true;
+    }
     ++m_credentialsRevision;
     m_credentialsSet = referenceFor(m_url, user) == m_reference;
     m_user = m_credentialsSet ? user : QString();
     m_password = m_credentialsSet ? password : QString();
     m_needsAuth = false;
+    QFile proof(bareProofPath());
+    m_bareVerified = m_credentialsSet && proof.open(QIODevice::ReadOnly) && proof.read(9) == "verified";
 }
 
 bool WebDavSession::prepareCache()
@@ -249,7 +297,8 @@ bool WebDavSession::prepareCache()
     for (const auto& file : directory.entryList({"transfer-*"}, QDir::Files)) {
         QFile::remove(directory.filePath(file));
     }
-    m_etag = strongEtag(QByteArray::fromBase64(data.value("etag").toString().toLatin1()));
+    m_disabledTag = QByteArray::fromBase64(data.value("disabledTag").toString().toLatin1());
+    m_etag = WebDavWrite::parseTag(QByteArray::fromBase64(data.value("etag").toString().toLatin1()));
     m_baseHash = QByteArray::fromHex(data.value("base").toString().toLatin1());
     m_attemptHash = QByteArray::fromHex(data.value("attempt").toString().toLatin1());
     return !data.isEmpty() || record({}, {});
@@ -261,6 +310,11 @@ bool WebDavSession::record(const QByteArray& etag, const QByteArray& base, const
                       {"etag", QString::fromLatin1(etag.toBase64())},
                       {"base", QString::fromLatin1(base.toHex())},
                       {"attempt", QString::fromLatin1(attempt.toHex())}};
+    if (!etag.isEmpty() && etag == m_disabledTag) {
+        state.insert("disabledTag", QString::fromLatin1(m_disabledTag.toBase64()));
+    } else {
+        m_disabledTag.clear();
+    }
     const auto bytes = QJsonDocument(state).toJson(QJsonDocument::Compact);
     QSaveFile file(m_directory + "/connection.json");
     if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(privateFile) || file.write(bytes) != bytes.size()
@@ -296,7 +350,7 @@ void WebDavSession::open()
 
 void WebDavSession::retry()
 {
-    if (m_reply) {
+    if (m_reply || m_workerCanceled) {
         return;
     }
     m_retryTimer.stop();
@@ -308,7 +362,7 @@ void WebDavSession::retry()
         } else {
             request(Operation::Verify);
         }
-    } else if (!m_attemptHash.isEmpty() || !m_dirty || m_etag.isEmpty()) {
+    } else if (!m_attemptHash.isEmpty() || !m_dirty || isReadOnly()) {
         request(Operation::Verify);
     } else {
         request(Operation::Upload);
@@ -321,7 +375,7 @@ void WebDavSession::localSaved()
         return;
     }
     m_dirty = true;
-    if (!m_reply && !m_conflict && !m_needsAuth && !isReadOnly()) {
+    if (!m_reply && !m_workerCanceled && !m_conflict && !m_needsAuth && !isReadOnly()) {
         retry();
     }
 }
@@ -390,6 +444,9 @@ void WebDavSession::prepareNetwork()
 
 void WebDavSession::request(Operation operation)
 {
+    if (m_workerCanceled || (operation == Operation::Upload && isReadOnly())) {
+        return;
+    }
     m_retryTimer.stop();
     auto transfer = std::make_unique<QTemporaryFile>(m_directory + "/transfer-XXXXXX");
     if (!transfer->open()) {
@@ -424,6 +481,12 @@ void WebDavSession::request(Operation operation)
         request.setRawHeader("If-Match", m_etag);
         request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/octet-stream"));
         m_dirty = false;
+        if (WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Weak) {
+            transfer->setAutoRemove(false);
+            transfer->close();
+            startLockedUpload(transfer->fileName());
+            return;
+        }
         m_reply = m_network->put(request, transfer.get());
     } else {
         m_reply = m_network->get(request);
@@ -435,6 +498,69 @@ void WebDavSession::request(Operation operation)
     connect(m_reply, &QNetworkReply::readyRead, this, &WebDavSession::readResponse);
     connect(m_reply, &QNetworkReply::finished, this, &WebDavSession::finished);
     setStatus(operation == Operation::Upload ? tr("Syncing…") : tr("Checking WebDAV database…"));
+}
+
+void WebDavSession::startLockedUpload(const QString& snapshot)
+{
+    m_workerCanceled = std::make_shared<std::atomic_bool>(false);
+    const WebDavWrite::Connection login{m_url, m_user, m_password, m_workerCanceled};
+    auto* watcher = new QFutureWatcher<WebDavWrite::LockedResult>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        const bool canceled = m_workerCanceled->load();
+        m_workerCanceled.reset();
+        if (canceled) {
+            retry();
+            return;
+        }
+        if (result.authenticated) {
+            emit authenticated();
+        }
+        if (result.outcome == WebDavWrite::Outcome::Rejected) {
+            m_rejectedEtag = result.rejectedTag;
+        }
+        if (result.releaseFailed) {
+            retryLater(tr("Could not confirm release of the WebDAV lock. The local copy is preserved."));
+            return;
+        }
+        using Outcome = WebDavWrite::Outcome;
+        switch (result.outcome) {
+        case Outcome::Rejected:
+        case Outcome::Verify:
+            request(Operation::Verify);
+            break;
+        case Outcome::Unsupported:
+            disableWrites();
+            break;
+        case Outcome::Authenticate:
+            m_needsAuth = true;
+            setStatus(tr("WebDAV login required"));
+            emit authenticationRequired();
+            break;
+        case Outcome::Retry:
+            retryLater(tr("Saved locally, waiting to sync"));
+            break;
+        case Outcome::Error:
+            stopWithError(tr("WebDAV request failed (HTTP %1).").arg(result.status));
+            break;
+        }
+    });
+    watcher->setFuture(QtConcurrent::run(WebDavWrite::writeLocked, login, snapshot, m_baseHash));
+    setStatus(tr("Checking the remote database under an exclusive lock…"));
+}
+
+void WebDavSession::disableWrites()
+{
+    m_dirty = true;
+    if (WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare) {
+        m_bareVerified = false;
+        QFile::remove(bareProofPath());
+    }
+    m_disabledTag = m_etag;
+    if (record(m_etag, m_baseHash)) {
+        setStatus(tr("Read-only: the server could not protect this write. Local changes are preserved."));
+    }
 }
 
 void WebDavSession::readResponse()
@@ -463,7 +589,7 @@ void WebDavSession::finished()
         QTimer::singleShot(0, this, &WebDavSession::retry);
     }
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const auto etag = strongEtag(reply->rawHeader("ETag"));
+    const auto etag = WebDavWrite::parseTag(reply->rawHeader("ETag"));
     if (m_transferFailed) {
         stopWithError(tr("The WebDAV download could not be written to disk."));
         return;
@@ -514,7 +640,9 @@ void WebDavSession::finished()
     m_needsAuth = false;
     m_retryDelay = 5000;
     if (operation == Operation::Upload) {
-        if (etag.isEmpty()) {
+        // Providers can format PUT and GET response tags differently. For compatibility
+        // writes, take the next validator from the GET that also confirms the uploaded bytes.
+        if (WebDavWrite::kind(m_etag) != WebDavWrite::Kind::Strong || WebDavWrite::kind(etag) != WebDavWrite::Kind::Strong) {
             request(Operation::Verify);
         } else if (record(etag, m_attemptHash)) {
             continueSaving();
@@ -567,12 +695,12 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
         stopWithError(tr("The saved WebDAV working copy could not be read."));
         return;
     }
-    if (!etag.isEmpty() && etag == m_rejectedEtag && hash == m_baseHash && localHash != hash) {
+    const auto rejected = m_rejectedEtag;
+    m_rejectedEtag.clear();
+    if (!etag.isEmpty() && etag == rejected && hash == m_baseHash && localHash != hash) {
         // A server rejecting its own unchanged validator cannot safely accept automatic saves.
-        m_dirty = true;
-        if (record({}, m_baseHash)) {
-            setStatus(tr("Read-only: the server rejected its current ETag. Changes are saved locally."));
-        }
+        m_etag = etag;
+        disableWrites();
         return;
     }
     if (hash == m_baseHash || hash == m_attemptHash || hash == localHash) {
@@ -587,7 +715,7 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
         if (etag.isEmpty() && !record({}, m_baseHash)) {
             return;
         }
-        setStatus(etag.isEmpty() ? tr("Read-only: the server does not provide a strong ETag")
+        setStatus(etag.isEmpty() ? tr("Read-only: the server did not provide a usable ETag.")
                                  : tr("Remote changes need to be merged"));
     }
 }
@@ -595,7 +723,13 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
 void WebDavSession::continueSaving()
 {
     if (isReadOnly()) {
-        setStatus(tr("Read-only: the server does not provide a strong ETag"));
+        if (!m_disabledTag.isEmpty() && m_etag == m_disabledTag) {
+            setStatus(tr("Read-only: the server could not protect this write. Local changes are preserved."));
+        } else if (WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare) {
+            setStatus(tr("Read-only until conditional writes are verified for this folder and account."));
+        } else {
+            setStatus(tr("Read-only: the server did not provide a usable ETag."));
+        }
     } else if (m_dirty) {
         request(Operation::Upload);
     } else {
@@ -605,7 +739,7 @@ void WebDavSession::continueSaving()
 
 void WebDavSession::fetchForMerge()
 {
-    if (m_conflict && !m_reply) {
+    if (m_conflict && !m_reply && !m_workerCanceled) {
         // An unlock/merge dialog may still own this snapshot. Keep its bytes paired with
         // their original validator until the user commits the merge.
         if (m_mergeFile) {
@@ -624,6 +758,7 @@ bool WebDavSession::acceptMergeBase()
     m_mergeFile.reset();
     m_mergeEtag.clear();
     m_conflict = false;
-    localSaved();
+    m_dirty = true;
+    continueSaving();
     return true;
 }

@@ -6,6 +6,7 @@
 #ifndef KEEPASSXC_WEBDAVSESSION_H
 #define KEEPASSXC_WEBDAVSESSION_H
 
+#include <atomic>
 #include <QHash>
 #include <QObject>
 #include <QTimer>
@@ -41,6 +42,8 @@ public:
     void setCredentials(const QString& user, const QString& password);
     void open();
     void localSaved();
+    bool canProbeWrites() const;
+    void probeWrites();
     void retry();
     void fetchForMerge();
     bool acceptMergeBase();
@@ -67,6 +70,9 @@ private:
     void setStatus(const QString& message);
     void publishReady();
     void request(Operation operation);
+    QString bareProofPath() const;
+    void startLockedUpload(const QString& snapshot);
+    void disableWrites();
     void readResponse();
     void finished();
     void receiveFile(Operation operation, const QByteArray& etag);
@@ -100,6 +106,9 @@ private:
     QByteArray m_baseHash;
     QByteArray m_attemptHash;
     QByteArray m_rejectedEtag;
+    QByteArray m_disabledTag;
+    bool m_bareVerified = false;
+    std::shared_ptr<std::atomic_bool> m_workerCanceled;
     std::unique_ptr<QTemporaryFile> m_transfer;
     std::unique_ptr<QTemporaryFile> m_mergeFile;
     QByteArray m_mergeEtag;
