@@ -15,7 +15,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15, platform: macOS-arm64, extension: dmg }
+          - { runner: macos-15, platform: macOS-arm64, mac_arch: arm64, extension: dmg }
+          - { runner: macos-15-intel, platform: macOS-x86_64, mac_arch: x86_64, extension: dmg }
           - { runner: windows-2022, platform: Windows-x64, extension: zip }
           - { runner: ubuntu-24.04, platform: Linux-x86_64, extension: AppImage }
     runs-on: ${{ matrix.runner }}
@@ -51,14 +52,18 @@ jobs:
           version: '6.8.3'
           arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || 'clang_64' }}
           cache: true
+          cache-key-prefix: fork-qt-${{ matrix.platform }}
 
       - name: Build macOS disk image
         if: runner.os == 'macOS'
+        env:
+          MAC_ARCH: ${{ matrix.mac_arch }}
         run: |
+          [[ "$(uname -m)" == "$MAC_ARCH" ]]
           brew install asciidoctor botan minizip qrencode readline
           export CMAKE_PREFIX_PATH="$QT_ROOT_DIR:$(brew --prefix minizip):$(brew --prefix readline):$(brew --prefix)"
           python3 release-tool.py build "$UPSTREAM_VERSION" --snapshot --override-version "$BUILD_VERSION" \
-            --use-system-deps --macos-target 15 -p arm64 -o packages \
+            --use-system-deps --macos-target 15 -p "$MAC_ARCH" -o packages \
             -c -DKPXC_FEATURE_NETWORK=ON -DKPXC_FEATURE_UPDATES=OFF
 
       - name: Build Windows portable ZIP
@@ -100,11 +105,16 @@ jobs:
 
       - name: Check the packaged macOS executable
         if: runner.os == 'macOS'
+        env:
+          MAC_ARCH: ${{ matrix.mac_arch }}
         run: |
           mount_dir=$(mktemp -d)
           hdiutil attach "dist/$PACKAGE_NAME.dmg" -readonly -nobrowse -mountpoint "$mount_dir"
           trap 'hdiutil detach "$mount_dir"' EXIT
-          "$mount_dir/KeePassXC.app/Contents/MacOS/keepassxc-cli" --version
+          app_bin="$mount_dir/KeePassXC.app/Contents/MacOS"
+          lipo -verify_arch "$MAC_ARCH" "$app_bin/KeePassXC"
+          lipo -verify_arch "$MAC_ARCH" "$app_bin/keepassxc-cli"
+          "$app_bin/keepassxc-cli" --version
 
       - name: Check the packaged Windows executable
         if: runner.os == 'Windows'
@@ -151,7 +161,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         working-directory: dist
         run: |
-          assets=("KeePassXC-$TAG-macOS-arm64.dmg" "KeePassXC-$TAG-Windows-x64.zip" "KeePassXC-$TAG-Linux-x86_64.AppImage")
+          assets=("KeePassXC-$TAG-macOS-arm64.dmg" "KeePassXC-$TAG-macOS-x86_64.dmg" "KeePassXC-$TAG-Windows-x64.zip" "KeePassXC-$TAG-Linux-x86_64.AppImage")
           sha256sum "${assets[@]}" > SHA256SUMS.txt
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --draft --title "KeePassXC $TAG" --generate-notes
