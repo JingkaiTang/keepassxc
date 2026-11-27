@@ -613,26 +613,35 @@ void TestGui::testWebDavOpenDialog()
 void TestGui::testWebDavDatabase_data()
 {
     QTest::addColumn<bool>("readOnly");
-    QTest::addColumn<bool>("remoteChanged");
+    QTest::addColumn<QString>("scenario");
     QTest::addColumn<QByteArray>("initialTag");
-    QTest::newRow("save and upload") << false << false << QByteArray("\"1\"");
-    QTest::newRow("server without version information") << true << false << QByteArray();
-    QTest::newRow("verify bare ETag then save") << false << false << QByteArray("bare-1");
-    QTest::newRow("merge desktop and mobile edits") << false << true << QByteArray("\"1\"");
-    QTest::newRow("merge with unchanged weak ETag") << false << true << QByteArray("W/\"1\"");
+    QTest::newRow("save and upload") << false << QString() << QByteArray("\"1\"");
+    QTest::newRow("server without version information") << true << QString() << QByteArray();
+    QTest::newRow("verify bare ETag then save") << false << QString() << QByteArray("bare-1");
+    QTest::newRow("merge desktop and mobile edits") << false << QString("independent") << QByteArray("\"1\"");
+    QTest::newRow("merge with unchanged weak ETag") << false << QString("independent") << QByteArray("W/\"1\"");
+    QTest::newRow("different existing entries same timestamp") << false << QString("edits") << QByteArray("\"1\"");
+    QTest::newRow("password conflict holds the batch") << false << QString("password") << QByteArray("\"1\"");
+    QTest::newRow("conflicting settings and passwords") << false << QString("settings") << QByteArray("\"1\"");
+    QTest::newRow("delete versus edit holds the batch") << false << QString("delete") << QByteArray("\"1\"");
+    QTest::newRow("third writer before merged PUT") << false << QString("third") << QByteArray("\"1\"");
+    QTest::newRow("keep draft through offline merge") << false << QString("draft") << QByteArray("\"1\"");
+    QTest::newRow("download completes during group edit") << false << QString("group") << QByteArray("\"1\"");
+    QTest::newRow("remote master key changed") << false << QString("rekey") << QByteArray("\"1\"");
+    QTest::newRow("unsaved desktop change") << false << QString("unsaved") << QByteArray("\"1\"");
+    QTest::newRow("check on unlock") << false << QString("locked") << QByteArray("\"1\"");
 }
 
 void TestGui::testWebDavDatabase()
 {
     QFETCH(bool, readOnly);
-    QFETCH(bool, remoteChanged);
+    QFETCH(QString, scenario);
     QFETCH(QByteArray, initialTag);
     cleanup();
-    const bool wasTestMode = QStandardPaths::isTestModeEnabled();
+    WebDavTestStorage storage;
     const QString appName = QCoreApplication::applicationName();
     const QString testAppName = QStringLiteral("kpxc-gui-webdav-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
     QCoreApplication::setApplicationName(testAppName);
-    QStandardPaths::setTestModeEnabled(true);
     const auto sslConfig = QSslConfiguration::defaultConfiguration();
     auto restoreConfig = qScopeGuard([&] {
         QDir testData(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
@@ -640,7 +649,6 @@ void TestGui::testWebDavDatabase()
             testData.removeRecursively();
         }
         QSslConfiguration::setDefaultConfiguration(sslConfig);
-        QStandardPaths::setTestModeEnabled(wasTestMode);
         QCoreApplication::setApplicationName(appName);
     });
 
@@ -686,7 +694,8 @@ void TestGui::testWebDavDatabase()
 
     auto* session = m_dbWidget->webDavSession();
     QVERIFY(session);
-    if (session->canProbeWrites()) {
+    if (initialTag == "bare-1") {
+        QTRY_VERIFY(session->canProbeWrites());
         auto* verify = m_dbWidget->findChild<QPushButton*>("webDavVerifyWritesButton");
         QVERIFY(verify && verify->isVisible());
         QVERIFY(m_db->isReadOnly());
@@ -709,12 +718,24 @@ void TestGui::testWebDavDatabase()
     QCOMPARE(m_tabWidget->currentDatabaseWidget(), m_dbWidget.data());
 
     if (readOnly) {
+        Database phone;
+        QVERIFY(phone.open(m_dbFilePath, m_db->key()));
+        phone.metadata()->setName("Changed on phone");
+        TemporaryFile updated;
+        QVERIFY(phone.saveAs(updated.fileName(), Database::Atomic, {}));
+        QVERIFY(updated.open(QIODevice::ReadOnly));
+        server.contents = updated.readAll();
+        qApp->applicationStateChanged(Qt::ApplicationActive);
+        QTRY_COMPARE(m_dbWidget->database()->metadata()->name(), QString("Changed on phone"));
+        m_db = m_dbWidget->database();
+        QCOMPARE(m_db->filePath(), session->localPath());
+        QVERIFY(m_dbWidget->database()->isReadOnly());
         auto* newEntry = m_mainWindow->findChild<QAction*>("actionEntryNew");
         QVERIFY(newEntry);
         QVERIFY(!newEntry->isEnabled());
         QVERIFY(server.preconditions.isEmpty());
-    } else if (remoteChanged) {
-        checkWebDavMerge(server);
+    } else if (!scenario.isEmpty()) {
+        checkWebDavMerge(server, scenario);
     } else {
         m_db->metadata()->setName("Manual save");
         QTRY_VERIFY(m_tabWidget->tabText(m_tabWidget->currentIndex()).endsWith("*"));
@@ -749,6 +770,7 @@ void TestGui::testWebDavDatabase()
         checkDatabase(afterBackup.fileName(), "Saved after backup");
     }
 
+    QPointer<WebDavSession> closingSession(session);
     const auto putRequests = server.preconditions.count();
     TemporaryFile local;
     fileDialog()->setNextFileName(local.fileName());
@@ -758,10 +780,10 @@ void TestGui::testWebDavDatabase()
     checkDatabase(local.fileName());
     QCOMPARE(server.preconditions.count(), putRequests);
     // Allow the detached remote session to release its working copy before cleaning the test directory.
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QTRY_VERIFY(!closingSession);
 }
 
-void TestGui::checkWebDavMerge(MockWebDavServer& server)
+void TestGui::checkWebDavMerge(MockWebDavServer& server, const QString& scenario)
 {
     auto addEntry = [](Database* database, const QString& title) {
         auto* entry = new Entry();
@@ -774,41 +796,196 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server)
     // A second client commits its independent entry to the server first.
     Database mobile;
     QVERIFY(mobile.open(m_dbFilePath, m_db->key()));
+    const auto commonId = mobile.rootGroup()->entriesRecursive().first()->uuid();
     const auto mobileEntry = addEntry(&mobile, "Mobile entry");
+    QUuid otherId;
+    if (scenario == "edits") {
+        const auto entries = m_db->rootGroup()->entriesRecursive();
+        QVERIFY(entries.size() >= 2);
+        otherId = entries.at(1)->uuid();
+        auto* ours = m_db->rootGroup()->findEntryByUuid(otherId);
+        auto* theirs = mobile.rootGroup()->findEntryByUuid(commonId);
+        const auto oneSecond = QDateTime::fromSecsSinceEpoch(1700000000, Qt::UTC);
+        ours->setPassword("edited on desktop");
+        theirs->setPassword("edited on phone");
+        for (auto* entry : {ours, theirs}) {
+            auto times = entry->timeInfo();
+            times.setLastModificationTime(oneSecond);
+            entry->setTimeInfo(times);
+        }
+    }
+    const bool conflict = scenario == "password" || scenario == "delete" || scenario == "settings";
+    if (scenario == "settings") {
+        mobile.metadata()->setName("Phone settings");
+        m_db->metadata()->setName("Desktop settings");
+    }
+    if (conflict) {
+        auto* theirEntry = mobile.rootGroup()->findEntryByUuid(commonId);
+        if (scenario == "delete") {
+            delete theirEntry;
+        } else {
+            theirEntry->setPassword("phone version");
+        }
+        m_db->rootGroup()->findEntryByUuid(commonId)->setPassword("desktop version");
+    }
+    if (scenario == "rekey") {
+        auto key = QSharedPointer<CompositeKey>::create();
+        key->addKey(QSharedPointer<PasswordKey>::create("new-phone-master"));
+        QVERIFY(mobile.setKey(key));
+    }
     TemporaryFile mobileCopy;
     QVERIFY(mobile.saveAs(mobileCopy.fileName(), Database::Atomic, {}));
     QVERIFY(mobileCopy.open(QIODevice::ReadOnly));
     const QByteArray mobileContents = mobileCopy.readAll();
+    auto* session = m_dbWidget->webDavSession();
+    if (scenario == "locked") {
+        QVERIFY(m_dbWidget->lock());
+        QVERIFY(m_dbWidget->isLocked());
+        server.contents = mobileContents;
+        server.etag = "\"locked-phone\"";
+        session->checkForChanges();
+        const auto key = mobile.key();
+        Database working;
+        QVERIFY(working.open(session->localPath(), key));
+        QVERIFY(!working.rootGroup()->findEntryByUuid(mobileEntry));
+        m_dbWidget->performUnlockDatabase("a");
+        QTRY_VERIFY(m_dbWidget->database()->rootGroup()->findEntryByUuid(mobileEntry));
+        m_db = m_dbWidget->database();
+        QVERIFY(server.preconditions.isEmpty());
+        return;
+    }
+    QUuid thirdEntry;
+    if (scenario == "third") {
+        thirdEntry = addEntry(&mobile, "Third device");
+        TemporaryFile thirdFile;
+        QVERIFY(mobile.saveAs(thirdFile.fileName(), Database::Atomic, {}));
+        QVERIFY(thirdFile.open(QIODevice::ReadOnly));
+        const auto thirdBytes = thirdFile.readAll();
+        server.beforePut = [&server, thirdBytes](const QByteArray& match) {
+            if (match == "\"mobile\"") {
+                server.contents = thirdBytes;
+                server.etag = "\"third\"";
+            }
+        };
+    }
+    if (scenario == "draft") {
+        triggerAction("actionEntryNew");
+        auto* editor = m_dbWidget->findChild<EditEntryWidget*>("editEntryWidget");
+        auto* field = editor->findChild<QLineEdit*>("titleEdit");
+        field->setText("Unsaved desktop draft");
+        server.contents = mobileContents;
+        server.etag = "\"mobile\"";
+        session->checkForChanges();
+        session->checkForChanges();
+        const auto port = server.serverPort();
+        server.close();
+        QCoreApplication::processEvents();
+        QVERIFY(m_dbWidget->isEntryEditActive());
+        QCOMPARE(field->text(), QString("Unsaved desktop draft"));
+        QTest::mouseClick(editor->findChild<QDialogButtonBox*>("buttonBox")->button(QDialogButtonBox::Ok),
+                          Qt::LeftButton);
+        triggerAction("actionDatabaseSave");
+        QTRY_VERIFY(session->statusText().contains("waiting"));
+        QVERIFY(server.start(port));
+        session->retry();
+        QTRY_COMPARE(server.uploaded.size(), 1);
+        m_db = m_dbWidget->database();
+        Database recovered;
+        QVERIFY(recovered.open(session->localPath(), m_db->key()));
+        QVERIFY(recovered.rootGroup()->findEntryByUuid(mobileEntry));
+        bool foundDraft = false;
+        for (auto* entry : recovered.rootGroup()->entriesRecursive()) {
+            foundDraft |= entry->title() == "Unsaved desktop draft";
+        }
+        QVERIFY(foundDraft);
+        return;
+    }
     server.contents = mobileContents;
     if (!server.supportsLock) {
         server.etag = "\"mobile\"";
     }
-    const auto mobileTag = server.etag;
+    if (scenario == "rekey") {
+        session->checkForChanges();
+        QTRY_VERIFY(session->statusText().contains("Unlock the updated"));
+        QVERIFY(!m_db->rootGroup()->findEntryByUuid(mobileEntry));
+        Database working;
+        QVERIFY(working.open(session->localPath(), m_db->key()));
+        QVERIFY(!working.rootGroup()->findEntryByUuid(mobileEntry));
+        QVERIFY(server.preconditions.isEmpty());
+        return;
+    }
+    if (scenario == "group") {
+        server.holdRead = true;
+        session->checkForChanges();
+        QTRY_VERIFY(server.heldRead);
+        auto* group = m_db->rootGroup()->children().first();
+        const auto groupId = group->uuid();
+        m_dbWidget->groupView()->setCurrentGroup(group);
+        m_dbWidget->switchToGroupEdit();
+        auto* editor = m_dbWidget->findChild<EditGroupWidget*>("editGroupWidget");
+        auto* name = editor->findChild<QLineEdit*>("editName");
+        name->setText("Group edited during download");
+        server.releaseRead();
+        QTRY_VERIFY(session->hasConflict());
+        QVERIFY(m_dbWidget->isGroupEditActive());
+        QCOMPARE(name->text(), QString("Group edited during download"));
+        QVERIFY(!m_db->rootGroup()->findEntryByUuid(mobileEntry));
+        QVERIFY(server.preconditions.isEmpty());
+        QTest::mouseClick(editor->findChild<QDialogButtonBox*>("buttonBox")->button(QDialogButtonBox::Ok),
+                          Qt::LeftButton);
+        QTRY_COMPARE(server.uploaded.count(), 1);
+        m_db = m_dbWidget->database();
+        QVERIFY(m_db->rootGroup()->findEntryByUuid(mobileEntry));
+        QCOMPARE(m_db->rootGroup()->findGroupByUuid(groupId)->name(), QString("Group edited during download"));
+        return;
+    }
+    const auto expectedTag = scenario == "third" ? QByteArray("\"third\"") : server.etag;
 
     const auto desktopEntry = addEntry(m_db.data(), "Desktop entry");
-    QTRY_VERIFY(m_tabWidget->tabText(m_tabWidget->currentIndex()).endsWith("*"));
-    triggerAction("actionDatabaseSave");
-    QTRY_VERIFY(m_dbWidget->webDavSession()->hasConflict());
-    QCOMPARE(server.contents, mobileContents);
-    QVERIFY(server.uploaded.isEmpty());
-
-    auto* merge = m_dbWidget->findChild<QPushButton*>("webDavMergeButton");
-    QVERIFY(merge);
-    QVERIFY(merge->isVisible());
-    QTest::mouseClick(merge, Qt::LeftButton);
-    MergeDialog* dialog = nullptr;
-    QTRY_VERIFY((dialog = m_dbWidget->findChild<MergeDialog*>()) && dialog->isVisible());
-    auto* buttons = dialog->findChild<QDialogButtonBox*>("buttonBox");
-    QVERIFY(buttons);
-    QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
+    if (scenario == "unsaved") {
+        session->checkForChanges();
+    } else {
+        QVERIFY(m_dbWidget->save());
+    }
+    if (conflict) {
+        QTRY_VERIFY(session->hasConflict());
+        auto* review = m_dbWidget->findChild<QPushButton*>("webDavMergeButton");
+        QVERIFY(review && review->isVisible());
+        QTest::mouseClick(review, Qt::LeftButton);
+        QDialog* chooser = nullptr;
+        QTRY_VERIFY((chooser = m_dbWidget->findChild<QDialog*>("webDavConflicts")) && chooser->isVisible());
+        if (scenario == "password") {
+            QPointer<QDialog> firstReview = chooser;
+            chooser->reject();
+            QTRY_VERIFY(!firstReview);
+            QVERIFY(session->hasConflict());
+            QVERIFY(server.uploaded.isEmpty());
+            QTest::mouseClick(review, Qt::LeftButton);
+            QTRY_VERIFY((chooser = m_dbWidget->findChild<QDialog*>("webDavConflicts")) && chooser->isVisible());
+        }
+        const auto selectors = chooser->findChildren<QComboBox*>();
+        auto* buttons = chooser->findChild<QDialogButtonBox*>();
+        QCOMPARE(selectors.size(), scenario == "settings" ? 2 : 1);
+        QVERIFY(buttons);
+        QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+        QCOMPARE(server.contents, mobileContents);
+        QVERIFY(server.uploaded.isEmpty());
+        // Choosing the remote version includes choosing deletion in the second row.
+        for (auto* choice : selectors) {
+            choice->setCurrentIndex(2);
+        }
+        QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
+    }
     QTRY_COMPARE(server.uploaded.count(), 1);
-    QCOMPARE(server.preconditions.last(), mobileTag);
+    QCOMPARE(server.preconditions.last(), expectedTag);
     if (server.supportsLock) {
-        QTRY_COMPARE(server.unlocks, 2);
-        QCOMPARE(server.lockedReads, 2);
+        QTRY_VERIFY(server.unlocks > 0 && server.unlocks == server.locks);
+        QCOMPARE(server.lockedReads, server.locks);
+        QCOMPARE(server.putLocks.last(), '(' + server.token + ')');
         QCOMPARE(server.preconditions.size(), 1);
     }
     QTRY_VERIFY(!m_dbWidget->webDavSession()->hasConflict());
+    m_db = m_dbWidget->database();
 
     TemporaryFile resultFile;
     QVERIFY(resultFile.open());
@@ -816,6 +993,30 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server)
     resultFile.close();
     Database result;
     QVERIFY(result.open(resultFile.fileName(), m_db->key()));
+    if (scenario == "edits") {
+        auto* ours = result.rootGroup()->findEntryByUuid(otherId);
+        auto* theirs = result.rootGroup()->findEntryByUuid(commonId);
+        QVERIFY(ours && theirs);
+        QCOMPARE(ours->password(), QString("edited on desktop"));
+        QCOMPARE(theirs->password(), QString("edited on phone"));
+    }
+    if (scenario == "settings") {
+        QCOMPARE(result.metadata()->name(), QString("Phone settings"));
+    }
+    if (conflict) {
+        auto* selected = result.rootGroup()->findEntryByUuid(commonId);
+        if (scenario == "delete") {
+            QVERIFY(!selected);
+            QVERIFY(result.containsDeletedObject(commonId));
+        } else {
+            QVERIFY(selected);
+            QCOMPARE(selected->password(), QString("phone version"));
+        }
+    }
+    if (!thirdEntry.isNull()) {
+        QVERIFY(server.preconditions.contains("\"mobile\""));
+        QVERIFY(result.rootGroup()->findEntryByUuid(thirdEntry));
+    }
     auto* fromMobile = result.rootGroup()->findEntryByUuid(mobileEntry);
     auto* fromDesktop = result.rootGroup()->findEntryByUuid(desktopEntry);
     QVERIFY(fromMobile);

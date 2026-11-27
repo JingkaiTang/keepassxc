@@ -31,10 +31,16 @@ private slots:
     void connectionReferences();
     void recentDisplayNames();
     void consecutiveSaves();
+    void backgroundChecks_data();
+    void backgroundChecks();
+    void legacyCache_data();
+    void legacyCache();
+    void rateLimitedCheck();
     void conflictAndMerge_data();
     void conflictAndMerge();
     void offlineRecovery();
     void interruptedUpload();
+    void interruptedRefresh();
     void readOnly_data();
     void readOnly();
     void bareWrites_data();

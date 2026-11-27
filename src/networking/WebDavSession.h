@@ -45,11 +45,23 @@ public:
     bool canProbeWrites() const;
     void probeWrites();
     void retry();
+    void setChecksEnabled(bool enabled);
+    void checkForChanges();
+    void networkRestored();
+    void pauseChecks(bool pause);
+    bool canReceiveRemote() const;
+    QString remotePath() const;
+    bool installRemote();
+    QString basePath() const;
+    quint64 localRevision() const;
+    bool installMerged(const QString& path, quint64 revision);
+    void reportReview(const QString& message);
     void fetchForMerge();
     bool acceptMergeBase();
 
 signals:
     void ready();
+    void remoteChanged(const QString& path);
     void statusChanged();
     void authenticated();
     void authenticationRequired();
@@ -60,12 +72,19 @@ private:
     enum class Operation
     {
         Download,
+        Check,
+        Head,
         Verify,
         Upload,
         Merge
     };
     bool prepareCache();
+    bool recoverInstall();
+    bool installCandidate(QFile& candidate, const QByteArray& hash);
+    QString snapshotPath(const QByteArray& hash) const;
+    bool keepSnapshot(QFile& source, const QByteArray& hash);
     void prepareNetwork();
+    void startCheck();
     bool record(const QByteArray& etag, const QByteArray& base, const QByteArray& attempt = {});
     void setStatus(const QString& message);
     void publishReady();
@@ -91,6 +110,7 @@ private:
     quint64 m_requestRevision = 0;
     bool m_ready = false;
     bool m_dirty = false;
+    quint64 m_localRevision = 0;
     bool m_conflict = false;
     bool m_needsAuth = false;
     bool m_transferFailed = false;
@@ -99,6 +119,18 @@ private:
     QNetworkAccessManager* m_network = nullptr;
     QNetworkReply* m_reply = nullptr;
     QTimer m_retryTimer;
+    QTimer m_pollTimer;
+    QTimer m_checkTimer;
+    bool m_checkQueued = false;
+    int m_checkPauses = 0;
+    QByteArray m_headTag;
+    QByteArray m_sampleTag;
+    QByteArray m_sampleHash;
+    bool m_pairingHead = false;
+    bool m_headVerified = false;
+    bool m_headDisabled = false;
+    int m_headSkips = 0;
+    qint64 m_retryAfter = 0;
     int m_retryDelay = 5000;
 
     // Last acknowledged remote representation, plus a PUT whose outcome may still be unknown.

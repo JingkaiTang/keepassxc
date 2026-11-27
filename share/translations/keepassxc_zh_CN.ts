@@ -10734,7 +10734,102 @@ Example: JBSWY3DPEHPK3PXP</source>
     </message>
 </context>
 <context>
+    <name>WebDavSync</name>
+    <message>
+        <source>Review WebDAV conflicts</source>
+        <translation>确认 WebDAV 同步冲突</translation>
+    </message>
+    <message>
+        <source>Entry</source>
+        <translation>条目</translation>
+    </message>
+    <message>
+        <source>This device</source>
+        <translation>本机</translation>
+    </message>
+    <message>
+        <source>WebDAV</source>
+        <translation>WebDAV</translation>
+    </message>
+    <message>
+        <source>Keep</source>
+        <translation>保留的版本</translation>
+    </message>
+    <message>
+        <source>Show passwords</source>
+        <translation>显示密码</translation>
+    </message>
+    <message>
+        <source>Merge and sync</source>
+        <translation>合并并同步</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>请选择…</translation>
+    </message>
+    <message>
+        <source>Database settings and groups</source>
+        <translation>数据库设置和分组</translation>
+    </message>
+    <message>
+        <source>Not present</source>
+        <translation>无此条目</translation>
+    </message>
+    <message>
+        <source>Unlock the updated database to use it with its new master key.</source>
+        <translation>请用新的主密钥解锁远端数据库，以在本机使用更新后的版本。</translation>
+    </message>
+    <message>
+        <source>Unlock the remote database to review its changes. A merged database will use the master key of this device.</source>
+        <translation>请解锁远端数据库以查看更改。合并后的数据库将使用本机版本的主密钥。</translation>
+    </message>
+    <message>
+        <source>Unlock the updated WebDAV database to review it. Your local copy is preserved.</source>
+        <translation>远端数据库需要重新解锁才能查看更改。本地副本已保留。</translation>
+    </message>
+    <message>
+        <source>Local changes are preserved. This WebDAV connection cannot safely upload them.</source>
+        <translation>本地修改已保留。当前 WebDAV 连接无法安全上传。</translation>
+    </message>
+    <message>
+        <source>The remote file has a different database root. Your local copy is preserved.</source>
+        <translation>远端文件的数据库根分组不同。本地副本已保留。</translation>
+    </message>
+    <message>
+        <source>Conflicting changes need your review. The entire upload is on hold.</source>
+        <translation>两端的修改有冲突。请确认要保留的版本，确认后将一起上传本批更改。</translation>
+    </message>
+    <message>
+        <source>The common baseline is unavailable. Review both versions before syncing.</source>
+        <translation>找不到上次同步的共同版本。请先比较并确认两端的内容。</translation>
+    </message>
+    <message>
+        <source>Could not create an encrypted merge candidate.</source>
+        <translation>无法创建用于合并的加密副本。</translation>
+    </message>
+    <message>
+        <source>The selected changes need manual review because their destination group changed.</source>
+        <translation>所选条目的目标分组已更改，请重新确认。</translation>
+    </message>
+    <message>
+        <source>Could not save the encrypted merge candidate: %1</source>
+        <translation>无法保存合并后的加密副本。%1</translation>
+    </message>
+</context>
+<context>
     <name>WebDavSession</name>
+    <message>
+        <source>Could not recover the interrupted WebDAV update. The encrypted files are preserved.</source>
+        <translation>无法恢复中断的 WebDAV 更新。加密文件已保留。</translation>
+    </message>
+    <message>
+        <source>Could not preserve the encrypted WebDAV synchronization baseline.</source>
+        <translation>无法保存用作同步基线的加密数据库副本。</translation>
+    </message>
+    <message>
+        <source>Could not install the updated WebDAV database.</source>
+        <translation>无法更新 WebDAV 数据库的本地副本。</translation>
+    </message>
     <message>
         <source>Write verification could not clean up the temporary file: %1</source>
         <translation>写入验证未能清理临时文件 %1。</translation>

@@ -47,6 +47,7 @@ class TagView;
 class ElidedLabel;
 class RemoteSettings;
 class WebDavSession;
+class WebDavSync;
 struct RemoteParams;
 
 namespace Ui
@@ -312,8 +313,7 @@ private:
     bool performSave(QString& errorMessage, const QString& fileName = {}, bool saveCopy = false);
 
 #ifdef KPXC_FEATURE_NETWORK
-    void mergeWebDavDatabase(const QString& filePath);
-    void reviewWebDavMerge(const QSharedPointer<Database>& remote);
+    QPointer<WebDavSync> m_webDavSync;
     QPointer<WebDavSession> m_webDav;
     QPointer<QWidget> m_webDavBanner;
 #endif

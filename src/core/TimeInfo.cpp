@@ -117,7 +117,7 @@ bool TimeInfo::operator!=(const TimeInfo& other) const
 bool TimeInfo::equals(const TimeInfo& other, CompareItemOptions options) const
 {
     // clang-format off
-    if (::compare(m_lastModificationTime, other.m_lastModificationTime, options) != 0) {
+    if (!options.testFlag(CompareItemIgnoreModificationTime) && ::compare(m_lastModificationTime, other.m_lastModificationTime, options) != 0) {
         return false;
     }
     if (::compare(m_creationTime, other.m_creationTime, options) != 0) {

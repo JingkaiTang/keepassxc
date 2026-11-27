@@ -6,14 +6,15 @@
 #include <QAuthenticator>
 #include <QBuffer>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QEventLoop>
 #include <QFile>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QScopeGuard>
-#include <algorithm>
 #include <QUuid>
 #include <QXmlStreamReader>
+#include <algorithm>
 
 namespace WebDavWrite
 {
@@ -26,6 +27,17 @@ namespace WebDavWrite
             return Kind::Weak;
         }
         return tag.startsWith('"') ? Kind::Strong : Kind::Bare;
+    }
+
+    qint64 retryAfterDeadline(int status, const QByteArray& header)
+    {
+        if ((status != 429 && status != 503) || header.isEmpty()) {
+            return 0;
+        }
+        bool ok;
+        const auto seconds = header.trimmed().toUInt(&ok);
+        return ok ? QDateTime::currentMSecsSinceEpoch() + qint64(seconds) * 1000
+                  : QDateTime::fromString(QString::fromLatin1(header), Qt::RFC2822Date).toMSecsSinceEpoch();
     }
 
     QByteArray parseTag(QByteArray tag)
@@ -134,6 +146,7 @@ namespace
             if (reply->error() != QNetworkReply::NoError && status < 400) {
                 status = 0;
             }
+            retryAfter = qMax(retryAfter, retryAfterDeadline(status, reply->rawHeader("Retry-After")));
             authenticated |= reply->property("triedLogin").toBool() && status >= 200 && status < 300;
             return {status, parseTag(reply->rawHeader("ETag")), reply->rawHeader("Lock-Token"), body, hash.result()};
         }
@@ -146,6 +159,7 @@ namespace
         }
 
         bool authenticated = false;
+        qint64 retryAfter = 0;
 
     private:
         QUrl m_url;
@@ -270,7 +284,9 @@ WebDavWrite::LockedResult WebDavWrite::writeLocked(const Connection& connection,
         if (lock.status == 405 || lock.status == 501 || lock.status == 403) {
             return {Outcome::Unsupported, lock.status, {}};
         }
-        return failure(lock.status);
+        auto result = failure(lock.status);
+        result.retryAfter = resource.retryAfter;
+        return result;
     }
     if (!validLockToken(lock.token)) {
         return {Outcome::Unsupported, lock.status, {}};
@@ -302,5 +318,6 @@ WebDavWrite::LockedResult WebDavWrite::writeLocked(const Connection& connection,
     auto result = putWhileLocked();
     result.releaseFailed = !resource.send("UNLOCK", {{"Lock-Token", lock.token}}).ok();
     result.authenticated = resource.authenticated;
+    result.retryAfter = resource.retryAfter;
     return result;
 }

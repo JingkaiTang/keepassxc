@@ -21,6 +21,7 @@ namespace WebDavWrite
 
     QByteArray parseTag(QByteArray header);
     Kind kind(const QByteArray& parsedTag);
+    qint64 retryAfterDeadline(int status, const QByteArray& header);
 
     struct Connection
     {
@@ -55,6 +56,7 @@ namespace WebDavWrite
         QByteArray rejectedTag;
         bool authenticated = false;
         bool releaseFailed = false;
+        qint64 retryAfter = 0;
     };
     LockedResult writeLocked(const Connection& connection, const QString& snapshot, const QByteArray& baseHash);
 }

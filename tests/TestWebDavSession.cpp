@@ -19,6 +19,9 @@
 
 #include "networking/WebDavSession.h"
 #include "util/MockWebDavServer.h"
+#include <QCryptographicHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <QDir>
 #include <QSaveFile>
@@ -47,7 +50,7 @@ namespace
 void TestWebDavSession::initTestCase()
 {
     // Keep manifests, lock files and working copies separate even for concurrent test runs.
-    QStandardPaths::setTestModeEnabled(true);
+    static WebDavTestStorage storage;
     QCoreApplication::setApplicationName("kpxc-test-webdav-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
     m_originalTls = QSslConfiguration::defaultConfiguration();
     QSslConfiguration::setDefaultConfiguration(MockWebDavServer::trustedConfiguration());
@@ -108,6 +111,164 @@ void TestWebDavSession::recentDisplayNames()
     QVERIFY(labels.value(first.reference()) != labels.value(second.reference()));
     QVERIFY(!labels.value(missing).isEmpty());
     QVERIFY(!labels.contains("local.kdbx"));
+}
+
+void TestWebDavSession::backgroundChecks_data()
+{
+    QTest::addColumn<QByteArray>("tag");
+    QTest::addColumn<bool>("consistentHead");
+    QTest::newRow("strong 304") << QByteArray("\"one\"") << true;
+    QTest::newRow("weak unchanged") << QByteArray("W/\"fixed\"") << true;
+    QTest::newRow("bare learns two versions") << QByteArray("one") << true;
+    QTest::newRow("bare mismatched HEAD") << QByteArray("one") << false;
+}
+
+void TestWebDavSession::backgroundChecks()
+{
+    QFETCH(QByteArray, tag);
+    QFETCH(bool, consistentHead);
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    server.etag = tag;
+    if (!consistentHead) {
+        server.headTag = "unrelated";
+    }
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    session.setCredentials("alice", {});
+    QSignalSpy ready(&session, &WebDavSession::ready);
+    QSignalSpy changed(&session, &WebDavSession::remoteChanged);
+    session.open();
+    QTRY_COMPARE(ready.count(), 1);
+    const auto synced = session.statusText();
+    session.setChecksEnabled(true);
+    session.checkForChanges();
+    session.checkForChanges();
+    QTRY_VERIFY(server.reads.size() > 1 && session.statusText() == synced);
+    if (tag.startsWith('"')) {
+        QCOMPARE(server.ifNoneMatch.last(), tag);
+        QCOMPARE(server.downloaded, 1);
+    } else {
+        QCOMPARE(server.downloaded, 2);
+    }
+    QCOMPARE(changed.count(), 0);
+
+    server.contents = m_remote;
+    if (!tag.startsWith("W/")) {
+        server.etag = tag.startsWith('"') ? QByteArray("\"two\"") : QByteArray("two");
+    }
+    session.checkForChanges();
+    QTRY_COMPARE(changed.count(), 1);
+    QVERIFY(session.installRemote());
+    QCOMPARE(readFile(session.localPath()), m_remote);
+    const auto downloads = server.downloaded;
+    const auto requests = server.reads.size();
+    session.checkForChanges();
+    QTRY_VERIFY(server.reads.size() > requests && session.statusText() == synced);
+    if (tag == "one" && consistentHead) {
+        QCOMPARE(server.reads.last(), QByteArray("HEAD"));
+        QCOMPARE(server.downloaded, downloads);
+    } else if (!tag.startsWith('"')) {
+        QCOMPARE(server.downloaded, downloads + 1);
+    }
+    QCOMPARE(server.probeCreates, 0);
+    QVERIFY(server.preconditions.isEmpty());
+}
+
+void TestWebDavSession::legacyCache_data()
+{
+    QTest::addColumn<bool>("dirty");
+    QTest::newRow("recover baseline from identical working copy") << false;
+    QTest::newRow("missing baseline on both sides") << true;
+}
+
+void TestWebDavSession::legacyCache()
+{
+    QFETCH(bool, dirty);
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    const auto reference = WebDavSession::referenceFor(server.url(), "alice");
+    {
+        WebDavSession old(reference, server.url());
+        QSignalSpy ready(&old, &WebDavSession::ready);
+        old.open();
+        QTRY_COMPARE(ready.count(), 1);
+        QCOMPARE(readFile(old.basePath()), m_original);
+        QVERIFY(QFile::remove(old.basePath()));
+        if (dirty) {
+            QVERIFY(commitLocalSave(old.localPath(), m_changed));
+        }
+    }
+    server.contents = m_remote;
+    server.etag = "\"phone\"";
+    WebDavSession restored(reference, {});
+    restored.open();
+    QTRY_VERIFY(restored.hasConflict());
+    if (dirty) {
+        QVERIFY(restored.basePath().isEmpty());
+        QVERIFY(!restored.installRemote());
+        QCOMPARE(readFile(restored.localPath()), m_changed);
+    } else {
+        QCOMPARE(readFile(restored.basePath()), m_original);
+        QVERIFY(restored.installRemote());
+        QCOMPARE(readFile(restored.basePath()), m_remote);
+    }
+    QVERIFY(server.uploaded.isEmpty());
+}
+
+void TestWebDavSession::interruptedRefresh()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    const auto reference = WebDavSession::referenceFor(server.url(), "alice");
+    {
+        WebDavSession first(reference, server.url());
+        QSignalSpy ready(&first, &WebDavSession::ready);
+        first.open();
+        QTRY_COMPARE(ready.count(), 1);
+        // Simulate exiting after the working copy was installed but before the manifest advanced.
+        // The phone has since reverted its version, including its original strong ETag.
+        const auto hash = QCryptographicHash::hash(m_remote, QCryptographicHash::Sha256).toHex();
+        const auto folder = QFileInfo(first.localPath()).dir();
+        QVERIFY(commitLocalSave(folder.filePath("base-" + QString::fromLatin1(hash) + ".kdbx"), m_remote));
+        const QJsonObject journal{{"working", QString::fromLatin1(hash)},
+                                  {"base", QString::fromLatin1(hash)},
+                                  {"etag", QString::fromLatin1(QByteArray("\"phone\"").toBase64())}};
+        QVERIFY(commitLocalSave(folder.filePath("install.json"), QJsonDocument(journal).toJson()));
+        QVERIFY(commitLocalSave(first.localPath(), m_remote));
+    }
+    WebDavSession recovered(reference, {});
+    recovered.open();
+    QTRY_VERIFY(recovered.canReceiveRemote());
+    QVERIFY(recovered.installRemote());
+    QCOMPARE(readFile(recovered.localPath()), m_original);
+    QVERIFY(server.preconditions.isEmpty());
+}
+
+void TestWebDavSession::rateLimitedCheck()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    QSignalSpy ready(&session, &WebDavSession::ready);
+    session.open();
+    QTRY_COMPARE(ready.count(), 1);
+    server.rateLimited = true;
+    session.setChecksEnabled(true);
+    QTRY_VERIFY(session.statusText().contains("Offline"));
+    const auto reads = server.reads;
+    session.networkRestored();
+    session.retry();
+    session.checkForChanges();
+    QVERIFY(commitLocalSave(session.localPath(), m_changed));
+    session.localSaved();
+    QTest::qWait(50);
+    QCOMPARE(server.reads, reads);
+    QVERIFY(server.preconditions.isEmpty());
+    QCOMPARE(readFile(session.localPath()), m_changed);
 }
 
 void TestWebDavSession::consecutiveSaves()

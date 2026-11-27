@@ -314,6 +314,8 @@ if(KPXC_FEATURE_NETWORK)
             gui/remote/WebDavDialog.cpp
             networking/WebDavCredentials.cpp
             networking/WebDavWrite.cpp
+            gui/remote/WebDavSync.cpp
+            networking/WebDavMerge.cpp
             networking/WebDavSession.cpp
             networking/HibpDownloader.cpp
             networking/NetworkManager.cpp

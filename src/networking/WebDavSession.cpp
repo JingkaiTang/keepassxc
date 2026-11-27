@@ -9,11 +9,11 @@
 
 #include <QAuthenticator>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
-#include <QtConcurrentRun>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLockFile>
@@ -22,7 +22,9 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QTemporaryFile>
+#include <QtConcurrentRun>
 #include <QtEndian>
+#include <limits>
 
 namespace
 {
@@ -46,6 +48,14 @@ namespace
             return {};
         }
         return QJsonDocument::fromJson(file.read(65536)).object();
+    }
+
+    bool writeJson(const QString& path, const QJsonObject& data)
+    {
+        const auto bytes = QJsonDocument(data).toJson(QJsonDocument::Compact);
+        QSaveFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.setPermissions(privateFile) && file.write(bytes) == bytes.size()
+               && file.commit();
     }
 
     QUrl canonicalUrl(QUrl url)
@@ -92,6 +102,12 @@ namespace
         }
         return count == 0;
     }
+    bool installFile(QFile& source, const QString& path)
+    {
+        QSaveFile file(path);
+        return source.seek(0) && file.open(QIODevice::WriteOnly) && file.setPermissions(privateFile)
+               && copyBytes(source, file) && file.commit();
+    }
 } // namespace
 
 WebDavSession::WebDavSession(const QString& reference, const QUrl& url, QObject* parent)
@@ -101,7 +117,17 @@ WebDavSession::WebDavSession(const QString& reference, const QUrl& url, QObject*
     , m_directory(directoryFor(reference))
 {
     m_retryTimer.setSingleShot(true);
-    connect(&m_retryTimer, &QTimer::timeout, this, &WebDavSession::retry);
+    connect(&m_retryTimer, &QTimer::timeout, this, [this] {
+        if (m_operation == Operation::Check || m_operation == Operation::Head) {
+            checkForChanges();
+        } else {
+            retry();
+        }
+    });
+    m_checkTimer.setSingleShot(true);
+    connect(&m_checkTimer, &QTimer::timeout, this, &WebDavSession::startCheck);
+    m_pollTimer.setInterval(60000);
+    connect(&m_pollTimer, &QTimer::timeout, this, &WebDavSession::checkForChanges);
 }
 
 WebDavSession::~WebDavSession()
@@ -196,8 +222,9 @@ bool WebDavSession::isReadOnly() const
     if (m_baseHash.isEmpty()) {
         return false;
     }
-    return m_etag.isEmpty() || m_etag == m_disabledTag
-           || (WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare && !m_bareVerified);
+    const auto& tag = m_conflict && m_mergeFile ? m_mergeEtag : m_etag;
+    return tag.isEmpty() || tag == m_disabledTag
+           || (WebDavWrite::kind(tag) == WebDavWrite::Kind::Bare && !m_bareVerified);
 }
 
 QString WebDavSession::bareProofPath() const
@@ -210,7 +237,7 @@ QString WebDavSession::bareProofPath() const
 bool WebDavSession::canProbeWrites() const
 {
     return m_ready && m_credentialsSet && !m_workerCanceled && !m_reply && !m_bareVerified
-           && WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare;
+           && WebDavWrite::kind(m_conflict && m_mergeFile ? m_mergeEtag : m_etag) == WebDavWrite::Kind::Bare;
 }
 
 void WebDavSession::probeWrites()
@@ -262,6 +289,10 @@ void WebDavSession::setCredentials(const QString& user, const QString& password)
         *m_workerCanceled = true;
     }
     ++m_credentialsRevision;
+    m_headVerified = false;
+    m_headDisabled = false;
+    m_sampleHash.clear();
+    m_sampleTag.clear();
     m_credentialsSet = referenceFor(m_url, user) == m_reference;
     m_user = m_credentialsSet ? user : QString();
     m_password = m_credentialsSet ? password : QString();
@@ -301,7 +332,58 @@ bool WebDavSession::prepareCache()
     m_etag = WebDavWrite::parseTag(QByteArray::fromBase64(data.value("etag").toString().toLatin1()));
     m_baseHash = QByteArray::fromHex(data.value("base").toString().toLatin1());
     m_attemptHash = QByteArray::fromHex(data.value("attempt").toString().toLatin1());
-    return !data.isEmpty() || record({}, {});
+    if ((!data.isEmpty() || record({}, {})) && recoverInstall()) {
+        return true;
+    }
+    m_lock.reset();
+    return false;
+}
+
+bool WebDavSession::recoverInstall()
+{
+    QFile journal(m_directory + "/install.json");
+    if (!journal.exists()) {
+        return true;
+    }
+    if (journal.open(QIODevice::ReadOnly)) {
+        const auto state = QJsonDocument::fromJson(journal.read(4096)).object();
+        journal.close();
+        const auto working = QByteArray::fromHex(state.value("working").toString().toLatin1());
+        const auto base = QByteArray::fromHex(state.value("base").toString().toLatin1());
+        const auto tag = WebDavWrite::parseTag(QByteArray::fromBase64(state.value("etag").toString().toLatin1()));
+        if (working.size() == 32 && base.size() == 32) {
+            // If the rename never happened, the previous manifest still describes the working copy.
+            if (databaseHash(localPath()) != working
+                || (databaseHash(snapshotPath(base)) == base && record(tag, base))) {
+                if (journal.remove()) {
+                    return true;
+                }
+            }
+        }
+    }
+    stopWithError(tr("Could not recover the interrupted WebDAV update. The encrypted files are preserved."));
+    return false;
+}
+
+QString WebDavSession::snapshotPath(const QByteArray& hash) const
+{
+    return m_directory + "/base-" + QString::fromLatin1(hash.toHex()) + ".kdbx";
+}
+
+QString WebDavSession::basePath() const
+{
+    const auto path = snapshotPath(m_baseHash);
+    return !m_baseHash.isEmpty() && databaseHash(path) == m_baseHash ? path : QString();
+}
+
+bool WebDavSession::keepSnapshot(QFile& source, const QByteArray& hash)
+{
+    const auto path = snapshotPath(hash);
+    if (databaseHash(path) == hash || installFile(source, path)) {
+        return true;
+    }
+    stopWithError(tr("Could not preserve the encrypted WebDAV synchronization baseline."));
+    return false;
 }
 
 bool WebDavSession::record(const QByteArray& etag, const QByteArray& base, const QByteArray& attempt)
@@ -315,12 +397,17 @@ bool WebDavSession::record(const QByteArray& etag, const QByteArray& base, const
     } else {
         m_disabledTag.clear();
     }
-    const auto bytes = QJsonDocument(state).toJson(QJsonDocument::Compact);
-    QSaveFile file(m_directory + "/connection.json");
-    if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(privateFile) || file.write(bytes) != bytes.size()
-        || !file.commit()) {
+    if (!writeJson(m_directory + "/connection.json", state)) {
         stopWithError(tr("Could not save the WebDAV synchronization state."));
         return false;
+    }
+    // The manifest is committed last. An interruption leaves either generation recoverable.
+    const QDir directory(m_directory);
+    for (const auto& name : directory.entryList({"base-*.kdbx"}, QDir::Files)) {
+        const auto path = directory.filePath(name);
+        if (path != snapshotPath(base) && path != snapshotPath(attempt)) {
+            QFile::remove(path);
+        }
     }
     m_etag = etag;
     m_baseHash = base;
@@ -339,10 +426,16 @@ void WebDavSession::open()
         return;
     }
     m_dirty = !localHash.isEmpty() && localHash != m_baseHash;
-    if (m_dirty || (!localHash.isEmpty() && !m_attemptHash.isEmpty())) {
+    if (!localHash.isEmpty() && localHash == m_baseHash && basePath().isEmpty()) {
+        QFile working(localPath());
+        if (!working.open(QIODevice::ReadOnly) || !keepSnapshot(working, localHash)) {
+            return;
+        }
+    }
+    if (!localHash.isEmpty()) {
         setStatus(tr("Saved locally, waiting to sync"));
         publishReady();
-        retry();
+        request(Operation::Verify);
         return;
     }
     request(Operation::Download);
@@ -350,7 +443,7 @@ void WebDavSession::open()
 
 void WebDavSession::retry()
 {
-    if (m_reply || m_workerCanceled) {
+    if (m_reply || m_workerCanceled || QDateTime::currentMSecsSinceEpoch() < m_retryAfter) {
         return;
     }
     m_retryTimer.stop();
@@ -369,12 +462,130 @@ void WebDavSession::retry()
     }
 }
 
+void WebDavSession::setChecksEnabled(bool enabled)
+{
+    if (m_pollTimer.isActive() == enabled) {
+        return;
+    }
+    if (enabled) {
+        m_pollTimer.start();
+        checkForChanges();
+    } else {
+        m_pollTimer.stop();
+    }
+}
+
+void WebDavSession::checkForChanges()
+{
+    // Collapse triggers from the same event-loop turn. If a request is already on the wire,
+    // keep one later check: the server may already have answered from an older version.
+    if (!m_checkTimer.isActive()) {
+        m_checkTimer.start(0);
+    }
+}
+
+void WebDavSession::startCheck()
+{
+    if (!m_ready || !m_pollTimer.isActive() || m_retryTimer.isActive() || m_needsAuth
+        || QDateTime::currentMSecsSinceEpoch() < m_retryAfter) {
+        return;
+    }
+    if (m_checkPauses || m_reply || m_workerCanceled) {
+        m_checkQueued = true;
+        return;
+    }
+    const bool clean = !m_conflict && !hasPendingUpload();
+    const bool checkHead = clean && !m_headDisabled && WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare;
+    m_pairingHead = false;
+    m_headTag.clear();
+    request(checkHead ? Operation::Head : Operation::Check);
+}
+
+void WebDavSession::networkRestored()
+{
+    if (QDateTime::currentMSecsSinceEpoch() >= m_retryAfter && m_pollTimer.isActive()) {
+        m_retryTimer.stop();
+        checkForChanges();
+    }
+}
+
+void WebDavSession::pauseChecks(bool pause)
+{
+    m_checkPauses += pause ? 1 : -1;
+    Q_ASSERT(m_checkPauses >= 0);
+    if (!m_checkPauses && m_checkQueued) {
+        m_checkQueued = false;
+        QTimer::singleShot(0, this, &WebDavSession::checkForChanges);
+    }
+}
+
+QString WebDavSession::remotePath() const
+{
+    return m_mergeFile ? m_mergeFile->fileName() : QString();
+}
+
+bool WebDavSession::canReceiveRemote() const
+{
+    return m_mergeFile && !hasPendingUpload() && databaseHash(localPath()) == m_baseHash;
+}
+
+bool WebDavSession::installRemote()
+{
+    if (!canReceiveRemote()) {
+        return false;
+    }
+    return installCandidate(*m_mergeFile, m_mergeHash);
+}
+
+quint64 WebDavSession::localRevision() const
+{
+    return m_localRevision;
+}
+
+bool WebDavSession::installMerged(const QString& path, quint64 revision)
+{
+    if (!m_conflict || !m_mergeFile || revision != m_localRevision || isReadOnly()) {
+        return false;
+    }
+    QFile candidate(path);
+    return candidate.open(QIODevice::ReadOnly) && installCandidate(candidate, databaseHash(candidate));
+}
+
+bool WebDavSession::installCandidate(QFile& candidate, const QByteArray& hash)
+{
+    // The working file and connection manifest cannot be renamed atomically together.
+    const auto journal = m_directory + "/install.json";
+    const QJsonObject state{{"working", QString::fromLatin1(hash.toHex())},
+                            {"base", QString::fromLatin1(m_mergeHash.toHex())},
+                            {"etag", QString::fromLatin1(m_mergeEtag.toBase64())}};
+    if (hash.isEmpty() || !keepSnapshot(*m_mergeFile, m_mergeHash) || !writeJson(journal, state)
+        || !installFile(candidate, localPath()) || !record(m_mergeEtag, m_mergeHash)) {
+        stopWithError(tr("Could not install the updated WebDAV database."));
+        return false;
+    }
+    QFile::remove(journal);
+    m_dirty = hash != m_mergeHash;
+    m_mergeFile.reset();
+    m_conflict = false;
+    continueSaving();
+    return true;
+}
+
+void WebDavSession::reportReview(const QString& message)
+{
+    setStatus(message);
+}
+
 void WebDavSession::localSaved()
 {
     if (!m_ready) {
         return;
     }
+    ++m_localRevision;
     m_dirty = true;
+    if (m_conflict && m_pollTimer.isActive()) {
+        QTimer::singleShot(0, this, &WebDavSession::checkForChanges);
+    }
     if (!m_reply && !m_workerCanceled && !m_conflict && !m_needsAuth && !isReadOnly()) {
         retry();
     }
@@ -411,7 +622,8 @@ void WebDavSession::retryLater(const QString& message)
     if (!m_ready) {
         emit failed(message);
     } else {
-        m_retryTimer.start(m_retryDelay);
+        const auto remaining = m_retryAfter - QDateTime::currentMSecsSinceEpoch();
+        m_retryTimer.start(int(qBound(qint64(m_retryDelay), remaining, qint64(std::numeric_limits<int>::max()))));
         m_retryDelay = qMin(60000, m_retryDelay * 2);
     }
 }
@@ -444,7 +656,7 @@ void WebDavSession::prepareNetwork()
 
 void WebDavSession::request(Operation operation)
 {
-    if (m_workerCanceled || (operation == Operation::Upload && isReadOnly())) {
+    if (m_reply || m_workerCanceled || (operation == Operation::Upload && isReadOnly())) {
         return;
     }
     m_retryTimer.stop();
@@ -475,7 +687,7 @@ void WebDavSession::request(Operation operation)
             return;
         }
         // Commit the exact identity of this snapshot before the server can see any bytes.
-        if (!record(m_etag, m_baseHash, hash)) {
+        if (!keepSnapshot(*transfer, hash) || !transfer->seek(0) || !record(m_etag, m_baseHash, hash)) {
             return;
         }
         request.setRawHeader("If-Match", m_etag);
@@ -488,7 +700,13 @@ void WebDavSession::request(Operation operation)
             return;
         }
         m_reply = m_network->put(request, transfer.get());
+    } else if (operation == Operation::Head) {
+        m_reply = m_network->head(request);
     } else {
+        if (operation == Operation::Check && !m_conflict && !hasPendingUpload()
+            && WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Strong) {
+            request.setRawHeader("If-None-Match", m_etag);
+        }
         m_reply = m_network->get(request);
     }
     m_operation = operation;
@@ -514,6 +732,7 @@ void WebDavSession::startLockedUpload(const QString& snapshot)
             retry();
             return;
         }
+        m_retryAfter = qMax(m_retryAfter, result.retryAfter);
         if (result.authenticated) {
             emit authenticated();
         }
@@ -577,6 +796,10 @@ void WebDavSession::finished()
     if (m_reply->isReadable() && m_reply->bytesAvailable() > 0) {
         readResponse();
     }
+    if (m_checkQueued) {
+        m_checkQueued = false;
+        QTimer::singleShot(0, this, &WebDavSession::checkForChanges);
+    }
     auto* reply = m_reply;
     m_reply = nullptr;
     reply->deleteLater();
@@ -621,8 +844,23 @@ void WebDavSession::finished()
         request(Operation::Verify);
         return;
     }
+    if (operation == Operation::Head && (status == 400 || status == 403 || status == 405 || status == 501)) {
+        m_headDisabled = true;
+        request(Operation::Check);
+        return;
+    }
+    if (operation == Operation::Check && status == 304 && reply->request().hasRawHeader("If-None-Match")) {
+        if (reply->hasRawHeader("ETag") && etag != m_etag) {
+            request(Operation::Verify);
+        } else {
+            m_retryDelay = 5000;
+            continueSaving();
+        }
+        return;
+    }
     if (reply->error() != QNetworkReply::NoError
         || (operation == Operation::Upload ? (status != 200 && status != 201 && status != 204) : status != 200)) {
+        m_retryAfter = qMax(m_retryAfter, WebDavWrite::retryAfterDeadline(status, reply->rawHeader("Retry-After")));
         if (status == 0 || status == 408 || status == 429 || status >= 500) {
             retryLater(m_ready && (m_dirty || !m_attemptHash.isEmpty()) ? tr("Saved locally, waiting to sync")
                                                                         : tr("WebDAV unavailable. Offline"));
@@ -639,7 +877,18 @@ void WebDavSession::finished()
     }
     m_needsAuth = false;
     m_retryDelay = 5000;
-    if (operation == Operation::Upload) {
+    if (operation == Operation::Head) {
+        m_headTag = etag;
+        // Even a verified server is periodically audited against the actual encrypted bytes.
+        if (m_headVerified && etag == m_etag && m_headSkips < 9 && !hasPendingUpload()) {
+            ++m_headSkips;
+            continueSaving();
+        } else {
+            m_headSkips = 0;
+            m_pairingHead = true;
+            request(Operation::Check);
+        }
+    } else if (operation == Operation::Upload) {
         // Providers can format PUT and GET response tags differently. For compatibility
         // writes, take the next validator from the GET that also confirms the uploaded bytes.
         if (WebDavWrite::kind(m_etag) != WebDavWrite::Kind::Strong || WebDavWrite::kind(etag) != WebDavWrite::Kind::Strong) {
@@ -669,10 +918,20 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
         }
         return;
     }
+    if (operation == Operation::Check && m_pairingHead) {
+        if (WebDavWrite::kind(etag) != WebDavWrite::Kind::Bare || etag != m_headTag
+            || (etag == m_sampleTag && hash != m_sampleHash)) {
+            m_headDisabled = true;
+        } else {
+            if (!m_sampleHash.isEmpty() && hash != m_sampleHash && etag != m_sampleTag) {
+                m_headVerified = true;
+            }
+            m_sampleTag = etag;
+            m_sampleHash = hash;
+        }
+    }
     if (operation == Operation::Download) {
-        QSaveFile workingCopy(localPath());
-        if (!workingCopy.open(QIODevice::WriteOnly) || !workingCopy.setPermissions(privateFile) || !m_transfer->seek(0)
-            || !copyBytes(*m_transfer, workingCopy) || !workingCopy.commit()) {
+        if (!keepSnapshot(*m_transfer, hash) || !installFile(*m_transfer, localPath())) {
             stopWithError(tr("Could not save the downloaded database."));
             return;
         }
@@ -705,18 +964,28 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
     }
     if (hash == m_baseHash || hash == m_attemptHash || hash == localHash) {
         // A lost PUT response, or an ETag-only change, can be reconciled by exact byte identity.
-        if (record(etag, hash)) {
+        if (keepSnapshot(*m_transfer, hash) && record(etag, hash)) {
+            m_mergeFile.reset();
             m_conflict = false;
             m_dirty = localHash != hash;
             continueSaving();
         }
     } else {
         m_conflict = true;
+        // A manual decision belongs to these exact bytes and their validator.
+        if (!m_mergeFile || m_mergeHash != hash || m_mergeEtag != etag) {
+            m_mergeFile = std::move(m_transfer);
+            m_mergeEtag = etag;
+            m_mergeHash = hash;
+        }
         if (etag.isEmpty() && !record({}, m_baseHash)) {
             return;
         }
         setStatus(etag.isEmpty() ? tr("Read-only: the server did not provide a usable ETag.")
                                  : tr("Remote changes need to be merged"));
+        if (m_pollTimer.isActive()) {
+            emit remoteChanged(remotePath());
+        }
     }
 }
 
@@ -752,7 +1021,8 @@ void WebDavSession::fetchForMerge()
 
 bool WebDavSession::acceptMergeBase()
 {
-    if (!m_conflict || !m_mergeFile || m_mergeEtag.isEmpty() || !record(m_mergeEtag, m_mergeHash)) {
+    if (!m_conflict || !m_mergeFile || isReadOnly() || !keepSnapshot(*m_mergeFile, m_mergeHash)
+        || !record(m_mergeEtag, m_mergeHash)) {
         return false;
     }
     m_mergeFile.reset();

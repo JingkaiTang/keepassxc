@@ -63,6 +63,7 @@
 #ifdef KPXC_FEATURE_NETWORK
 #include "gui/IconDownloaderDialog.h"
 #include "networking/WebDavSession.h"
+#include "remote/WebDavSync.h"
 #include <QPushButton>
 #endif
 
@@ -360,6 +361,7 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
         return;
     }
     if (m_webDav) {
+        m_webDav->setChecksEnabled(false);
         disconnect(m_webDav, nullptr, this, nullptr);
         delete m_webDavBanner;
     }
@@ -386,10 +388,11 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
             m_db->setReadOnly(session->isReadOnly());
             label->setText(session->statusText());
             verify->setVisible(session->canProbeWrites());
-            merge->setVisible(session->hasConflict() && !session->isReadOnly());
+            merge->setVisible(session->hasConflict());
         };
         connect(session, &WebDavSession::statusChanged, banner, refresh);
-        connect(merge, &QPushButton::clicked, session, &WebDavSession::fetchForMerge);
+        m_webDavSync = new WebDavSync(this, session, banner);
+        connect(merge, &QPushButton::clicked, m_webDavSync, &WebDavSync::review);
         connect(verify, &QPushButton::clicked, this, [this, session] {
             if (MessageBox::question(this, tr("Verify conditional writes"),
                                      tr("Create, update and delete a temporary file in this WebDAV folder to check "
@@ -398,7 +401,6 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
                 session->probeWrites();
             }
         });
-        connect(session, &WebDavSession::mergeReady, this, &DatabaseWidget::mergeWebDavDatabase);
         refresh();
         if (isLocked()) {
             switchToOpenDatabase(m_db->filePath());
@@ -407,49 +409,6 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
     emit databaseReferenceChanged();
 }
 
-void DatabaseWidget::mergeWebDavDatabase(const QString& filePath)
-{
-    if (!m_webDav || !m_webDav->hasConflict() || currentMode() != Mode::ViewMode) {
-        return;
-    }
-
-    auto target = m_db;
-    auto remote = QSharedPointer<Database>::create();
-    if (remote->open(filePath, target->key())) {
-        if (target == m_db && !isLocked()) {
-            reviewWebDavMerge(remote);
-        }
-        return;
-    }
-    if (target != m_db || isLocked()) {
-        return;
-    }
-
-    // The remote database may have had its master key changed on another device.
-    auto* dialog = new DatabaseOpenDialog(this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setIntent(DatabaseOpenDialog::Intent::WebDavMerge);
-    dialog->setTarget(this, filePath);
-    dialog->showMessage(tr("Unlock the remote version to review its changes. The merged file will use "
-                           "the master key of your open database."),
-                        MessageWidget::Information,
-                        MessageWidget::DisableAutoHide);
-    dialog->open();
-}
-
-void DatabaseWidget::reviewWebDavMerge(const QSharedPointer<Database>& remote)
-{
-    if (!m_webDav || !m_webDav->hasConflict() || isLocked() || !remote) {
-        return;
-    }
-    auto* dialog = new MergeDialog(remote, m_db, this);
-    connect(dialog, &MergeDialog::databaseMerged, this, [this, target = m_db](bool) {
-        if (target == m_db && !isLocked() && m_webDav && m_webDav->hasConflict() && save()) {
-            m_webDav->acceptMergeBase();
-        }
-    });
-    dialog->open();
-}
 #endif
 
 QString DatabaseWidget::displayName() const
@@ -1639,7 +1598,9 @@ void DatabaseWidget::unlockDatabase(bool accepted)
     if (senderDialog) {
 #ifdef KPXC_FEATURE_NETWORK
         if (senderDialog->intent() == DatabaseOpenDialog::Intent::WebDavMerge) {
-            reviewWebDavMerge(senderDialog->database());
+            if (m_webDavSync) {
+                m_webDavSync->reviewUnlocked(senderDialog->database());
+            }
             return;
         }
 #endif

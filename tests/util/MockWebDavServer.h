@@ -26,8 +26,44 @@
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QSslSocket>
+#include <QStandardPaths>
 #include <QTcpServer>
+#include <QTemporaryDir>
 #include <QUrl>
+#include <functional>
+
+// Qt test mode always uses ~/.qttest on Linux, even with an isolated XDG_DATA_HOME.
+class WebDavTestStorage
+{
+public:
+    WebDavTestStorage()
+    {
+#ifdef Q_OS_LINUX
+        qputenv("XDG_DATA_HOME", directory.path().toUtf8());
+        QStandardPaths::setTestModeEnabled(false);
+#else
+        QStandardPaths::setTestModeEnabled(true);
+#endif
+    }
+    ~WebDavTestStorage()
+    {
+#ifdef Q_OS_LINUX
+        if (previousDataHome.isNull()) {
+            qunsetenv("XDG_DATA_HOME");
+        } else {
+            qputenv("XDG_DATA_HOME", previousDataHome);
+        }
+#endif
+        QStandardPaths::setTestModeEnabled(previousMode);
+    }
+
+private:
+    const bool previousMode = QStandardPaths::isTestModeEnabled();
+#ifdef Q_OS_LINUX
+    QTemporaryDir directory;
+    const QByteArray previousDataHome = qgetenv("XDG_DATA_HOME");
+#endif
+};
 
 // A loopback-only HTTPS resource with optimistic concurrency and optional Basic authentication.
 class MockWebDavServer : public QTcpServer
@@ -59,9 +95,26 @@ public:
         }
     }
 
+    void releaseRead()
+    {
+        holdRead = false;
+        if (heldRead) {
+            respond(heldRead, "200 OK", heldContents, heldTag);
+            heldRead.clear();
+        }
+    }
+
     QByteArray contents;
+    bool holdRead = false;
+    QPointer<QSslSocket> heldRead;
     QByteArray etag = "\"1\"";
     QByteArray password;
+    QList<QByteArray> reads;
+    QList<QByteArray> ifNoneMatch;
+    int downloaded = 0;
+    QByteArray headTag;
+    bool rateLimited = false;
+    std::function<void(const QByteArray&)> beforePut;
     bool pauseUpload = false;
     bool omitUploadEtag = false;
     QByteArray uploadEtagOverride;
@@ -140,8 +193,26 @@ protected:
                 if (locked && headers.value("if") == '(' + token + ')') {
                     ++lockedReads;
                 }
-                respond(socket, "200 OK", method == "GET" ? contents : QByteArray(), etagHeader());
+                reads.append(method);
+                ifNoneMatch.append(headers.value("if-none-match"));
+                if (rateLimited) {
+                    respond(socket, "429 Too Many Requests", {}, "Retry-After: 120\r\n");
+                } else if (holdRead && method == "GET") {
+                    heldRead = socket;
+                    heldContents = contents;
+                    heldTag = etagHeader();
+                } else if (method == "HEAD" && !headTag.isEmpty()) {
+                    respond(socket, "200 OK", {}, "ETag: " + headTag + "\r\n");
+                } else if (!etag.isEmpty() && headers.value("if-none-match") == etag) {
+                    respond(socket, "304 Not Modified", {}, etagHeader());
+                } else {
+                    downloaded += method == "GET";
+                    respond(socket, "200 OK", method == "GET" ? contents : QByteArray(), etagHeader());
+                }
             } else if (method == "PUT") {
+                if (beforePut) {
+                    beforePut(headers.value("if-match"));
+                }
                 preconditions.append(headers.value("if-match"));
                 putLocks.append(headers.value("if"));
                 if (rejectConditionalWrites || etag.isEmpty() || preconditions.last() != etag
@@ -200,6 +271,8 @@ private:
         }
     }
 
+    QByteArray heldContents;
+    QByteArray heldTag;
     QByteArray probePath;
     QByteArray probeBody;
     int probeVersion = 0;

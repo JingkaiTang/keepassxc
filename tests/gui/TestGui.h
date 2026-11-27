@@ -97,7 +97,7 @@ private:
                     Qt::KeyboardModifiers stateKey = {});
     void checkSaveDatabase();
 #ifdef KPXC_FEATURE_NETWORK
-    void checkWebDavMerge(MockWebDavServer& server);
+    void checkWebDavMerge(MockWebDavServer& server, const QString& scenario);
 #endif
     void checkStatusBarText(const QString& textFragment);
     void prepareAndTriggerRemoteSync();

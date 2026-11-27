@@ -28,6 +28,7 @@ enum CompareItemOption
     CompareItemIgnoreDisabled = 0x10,
     CompareItemIgnoreHistory = 0x20,
     CompareItemIgnoreLocation = 0x40,
+    CompareItemIgnoreModificationTime = 0x80,
 };
 Q_DECLARE_FLAGS(CompareItemOptions, CompareItemOption)
 Q_DECLARE_OPERATORS_FOR_FLAGS(CompareItemOptions)
