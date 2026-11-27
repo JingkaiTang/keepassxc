@@ -31,6 +31,10 @@ class Database;
 class DatabaseWidget;
 class DatabaseWidgetStateSync;
 class DatabaseOpenWidget;
+#ifdef KPXC_FEATURE_NETWORK
+class WebDavDialog;
+class WebDavSession;
+#endif
 
 class DatabaseTabWidget : public QTabWidget
 {
@@ -65,6 +69,11 @@ public slots:
 
     DatabaseWidget* newDatabase();
     void openDatabase();
+#ifdef KPXC_FEATURE_NETWORK
+    void openWebDav();
+    void updateWebDavCredentials();
+    void forgetWebDavCredentials();
+#endif
     void mergeDatabase();
     void importFile();
     bool saveDatabase(int index = -1);
@@ -106,6 +115,10 @@ signals:
     void tabVisibilityChanged(bool tabsVisible);
     void messageGlobal(const QString&, MessageWidget::MessageType type);
     void messageDismissGlobal();
+#ifdef KPXC_FEATURE_NETWORK
+    void webDavStatusChanged();
+    void webDavNotice(DatabaseWidget* widget, const QString& message);
+#endif
     void databaseUnlockDialogFinished(bool accepted, DatabaseWidget* dbWidget);
 
 private slots:
@@ -114,11 +127,33 @@ private slots:
     void emitDatabaseLockChanged();
     void handleDatabaseUnlockDialogFinished(bool accepted, DatabaseWidget* dbWidget);
     void handleExportError(const QString& reason);
-    void updateLastDatabases();
 
 private:
+    void updateTabToolTip(int index, DatabaseWidget* dbWidget);
     QSharedPointer<Database> execNewDatabaseWizard();
-    void updateLastDatabases(const QSharedPointer<Database>& database);
+    void updateLastDatabases(DatabaseWidget* widget);
+#ifdef KPXC_FEATURE_NETWORK
+    struct WebDavConnection
+    {
+        WebDavSession* session = nullptr;
+        QPointer<DatabaseWidget> widget;
+        QPointer<WebDavDialog> dialog;
+        QMetaObject::Connection rememberLogin;
+        QString user;
+        quint64 loginRevision = 0;
+        bool ready = false;
+    };
+    void startWebDav(const QString& reference, WebDavDialog* login, bool inBackground);
+    void attachWebDav(WebDavSession* session, bool inBackground);
+    void enterWebDavLogin(WebDavSession* session);
+    void applyWebDavLogin(WebDavSession* session, WebDavDialog* dialog);
+    void releaseWebDav(const QString& reference);
+    template <typename Operation, typename Callback>
+    void runWebDavCredentialTask(WebDavSession* session, Operation operation, Callback completed);
+
+    QHash<QString, WebDavConnection> m_webDavConnections;
+    QPointer<WebDavDialog> m_webDavOpenDialog;
+#endif
     bool warnOnExport();
     void displayUnlockDialog();
 

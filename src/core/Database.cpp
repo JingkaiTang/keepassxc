@@ -31,6 +31,8 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScopeGuard>
+#include <QScopedValueRollback>
 #include <QTemporaryFile>
 #include <QTimer>
 
@@ -104,8 +106,6 @@ QUuid Database::uuid() const
 
 /**
  * Open the database from a previously specified file.
- * Unless `readOnly` is set to false, the database will be opened in
- * read-write mode and fall back to read-only if that is not possible.
  *
  * @param key composite key for unlocking the database
  * @param error error message in case of failure
@@ -118,8 +118,6 @@ bool Database::open(QSharedPointer<const CompositeKey> key, QString* error)
 
 /**
  * Open the database from a file.
- * Unless `readOnly` is set to false, the database will be opened in
- * read-write mode and fall back to read-only if that is not possible.
  *
  * If key is provided as null, only headers will be read.
  *
@@ -284,6 +282,15 @@ bool Database::saveAs(const QString& filePath, SaveAction action, const QString&
         return false;
     }
 
+    if (isReadOnly()
+        && (QFileInfo(filePath) == QFileInfo(m_data.filePath)
+            || (!backupFilePath.isEmpty() && QFileInfo(backupFilePath) == QFileInfo(m_data.filePath)))) {
+        if (error) {
+            *error = tr("This database is read-only. Save a copy to a different file.");
+        }
+        return false;
+    }
+
     // Make sure we don't overwrite external modifications unless explicitly allowed
     if (!m_ignoreFileChangesUntilSaved && !m_fileBlockHash.isEmpty() && filePath == m_data.filePath) {
         QFile dbFile(filePath);
@@ -314,7 +321,6 @@ bool Database::saveAs(const QString& filePath, SaveAction action, const QString&
         }
     }
 
-    // Clear read-only flag
     m_fileWatcher->stop();
 
     // Add random data to prevent side-channel data deduplication attacks
@@ -352,6 +358,67 @@ bool Database::saveAs(const QString& filePath, SaveAction action, const QString&
         markAsModified();
     }
 
+    return ok;
+}
+
+/**
+ * Write the current contents to a separate KDBX without changing the active file
+ * identity, its hash, or the credentials derived for its KDBX header.
+ */
+bool Database::saveCopy(const QString& filePath, QString* error)
+{
+    if (isSaving() || !isInitialized()) {
+        if (error) {
+            *error = tr("The database is locked or a save is already in progress.");
+        }
+        return false;
+    }
+    if (!m_data.filePath.isEmpty() && QFileInfo(filePath) == QFileInfo(m_data.filePath)) {
+        if (error) {
+            *error = tr("Choose a different file for the database backup.");
+        }
+        return false;
+    }
+
+    QMutexLocker locker(&m_saveMutex);
+    const bool modificationPending = m_modifiedTimer.isActive();
+    const auto ok = AsyncTask::runAndWaitForFuture([&] {
+        QSaveFile copy(filePath);
+        if (!copy.open(QIODevice::WriteOnly) || !copy.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
+            if (error) {
+                *error = copy.errorString();
+            }
+            return false;
+        }
+
+        // The KDBX writer rotates the KDF seed and derived keys. Use fresh key
+        // buffers for the copy, leaving the sensitive originals in secure storage.
+        DatabaseData copyKeys;
+        copyKeys.kdf = m_data.kdf->clone();
+        auto swapKeys = [&] {
+            m_data.kdf.swap(copyKeys.kdf);
+            m_data.masterSeed.swap(copyKeys.masterSeed);
+            m_data.challengeResponseKey.swap(copyKeys.challengeResponseKey);
+            m_data.transformedDatabaseKey.swap(copyKeys.transformedDatabaseKey);
+        };
+        swapKeys();
+        const auto restoreKeys = qScopeGuard(swapKeys);
+        const QScopedValueRollback restoreVersion(m_data.formatVersion);
+        const QScopedValueRollback restoreModified(m_modified);
+        if (!writeDatabase(&copy, error)) {
+            return false;
+        }
+        if (!copy.commit()) {
+            if (error) {
+                *error = copy.errorString();
+            }
+            return false;
+        }
+        return true;
+    });
+    if (modificationPending && m_modified) {
+        startModifiedTimer();
+    }
     return ok;
 }
 
@@ -1068,6 +1135,19 @@ void Database::emptyRecycleBin()
     }
 }
 
+bool Database::isReadOnly() const
+{
+    return m_readOnly;
+}
+
+void Database::setReadOnly(bool readOnly)
+{
+    if (m_readOnly != readOnly) {
+        m_readOnly = readOnly;
+        emit readOnlyChanged(readOnly);
+    }
+}
+
 bool Database::isModified() const
 {
     return m_modified;
@@ -1100,6 +1180,9 @@ void Database::markAsClean()
 
 void Database::markNonDataChange()
 {
+    if (isReadOnly()) {
+        return;
+    }
     m_hasNonDataChange = true;
     emit databaseNonDataChanged();
 }

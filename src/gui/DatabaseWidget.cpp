@@ -62,6 +62,9 @@
 
 #ifdef KPXC_FEATURE_NETWORK
 #include "gui/IconDownloaderDialog.h"
+#include "networking/WebDavSession.h"
+#include "remote/WebDavSync.h"
+#include <QPushButton>
 #endif
 
 #ifdef KPXC_FEATURE_SSHAGENT
@@ -336,6 +339,81 @@ bool DatabaseWidget::isEditWidgetModified() const
     return false;
 }
 
+QString DatabaseWidget::databaseReference() const
+{
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        return m_webDav->reference();
+    }
+#endif
+    return m_db->filePath();
+}
+
+#ifdef KPXC_FEATURE_NETWORK
+WebDavSession* DatabaseWidget::webDavSession() const
+{
+    return m_webDav;
+}
+
+void DatabaseWidget::setWebDavSession(WebDavSession* session)
+{
+    if (m_webDav == session) {
+        return;
+    }
+    if (m_webDav) {
+        m_webDav->setChecksEnabled(false);
+        disconnect(m_webDav, nullptr, this, nullptr);
+        delete m_webDavBanner;
+    }
+    m_webDav = session;
+    m_db->setReadOnly(session && session->isReadOnly());
+    if (session) {
+        auto* banner = new QWidget(m_mainWidget);
+        banner->setObjectName("webDavAttentionBanner");
+        auto* layout = new QHBoxLayout(banner);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto* label = new QLabel(banner);
+        label->setTextFormat(Qt::PlainText);
+        label->setWordWrap(true);
+        auto* merge = new QPushButton(tr("Merge WebDAV Changes…"), banner);
+        merge->setObjectName("webDavMergeButton");
+        layout->addWidget(label, 1);
+        layout->addWidget(merge);
+        auto* verify = new QPushButton(tr("Verify conditional writes…"), banner);
+        verify->setObjectName("webDavVerifyWritesButton");
+        layout->addWidget(verify);
+        static_cast<QVBoxLayout*>(m_mainWidget->layout())->insertWidget(0, banner);
+        m_webDavBanner = banner;
+
+        auto refresh = [this, session, banner, label, merge, verify] {
+            m_db->setReadOnly(session->isReadOnly());
+            label->setText(session->statusText());
+            verify->setVisible(session->needsWriteVerification());
+            verify->setEnabled(session->canProbeWrites());
+            merge->setVisible(session->hasConflict());
+            banner->setVisible(session->status() == WebDavSession::Status::NeedsAttention);
+        };
+        connect(session, &WebDavSession::statusChanged, banner, refresh);
+        m_webDavSync = new WebDavSync(this, session, banner);
+        connect(merge, &QPushButton::clicked, m_webDavSync, &WebDavSync::review);
+        connect(verify, &QPushButton::clicked, this, [this, session] {
+            if (MessageBox::question(this, tr("Verify conditional writes"),
+                                     tr("Create, update and delete a temporary file in this WebDAV folder to check "
+                                        "that the server rejects outdated writes?"),
+                                     MessageBox::Yes | MessageBox::Cancel, MessageBox::Cancel) == MessageBox::Yes) {
+                session->probeWrites();
+            }
+        });
+        refresh();
+        if (isLocked()) {
+            switchToOpenDatabase(m_db->filePath());
+        }
+    }
+    emit databaseReferenceChanged();
+}
+
+#endif
+
 QString DatabaseWidget::displayName() const
 {
     if (!m_db) {
@@ -360,6 +438,11 @@ QString DatabaseWidget::displayName() const
 
 QString DatabaseWidget::displayFileName() const
 {
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        return m_webDav->url().fileName();
+    }
+#endif
     if (m_db) {
         QFileInfo fileinfo(m_db->filePath());
         return fileinfo.fileName();
@@ -369,6 +452,11 @@ QString DatabaseWidget::displayFileName() const
 
 QString DatabaseWidget::displayFilePath() const
 {
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        return m_webDav->url().toDisplayString();
+    }
+#endif
     if (m_db) {
         return m_db->canonicalFilePath();
     }
@@ -486,6 +574,11 @@ void DatabaseWidget::replaceDatabase(QSharedPointer<Database> db)
     // signals triggering dangling pointers.
     auto oldDb = m_db;
     m_db = std::move(db);
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        m_db->setReadOnly(m_webDav->isReadOnly());
+    }
+#endif
     connectDatabaseSignals();
     m_groupView->changeDatabase(m_db);
     m_tagView->setDatabase(m_db);
@@ -796,6 +889,10 @@ void DatabaseWidget::filterByTag()
 
 void DatabaseWidget::setTag(QAction* action)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     auto tag = action->text();
     auto state = action->isChecked();
     for (auto entry : m_entryView->selectedEntries()) {
@@ -1152,6 +1249,10 @@ int DatabaseWidget::addChildWidget(QWidget* w)
 
 void DatabaseWidget::syncWithRemote(const RemoteParams* params)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     setDisabled(true);
     emit databaseSyncInProgress();
 
@@ -1280,6 +1381,10 @@ void DatabaseWidget::switchToEntryEdit(Entry* entry)
 
 void DatabaseWidget::switchToEntryEdit(Entry* entry, bool create)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     // If creating an entry, it will be in `currentGroup()` so it's
     // okay to use but when editing, the entry may not be in
     // `currentGroup()` so we get the entry's group.
@@ -1301,6 +1406,10 @@ void DatabaseWidget::switchToEntryEdit(Entry* entry, bool create)
 
 void DatabaseWidget::switchToGroupEdit(Group* group, bool create)
 {
+    if (m_db->isReadOnly()) {
+        return;
+    }
+
     m_editGroupWidget->loadGroup(group, create, m_db);
     setCurrentWidget(m_editGroupWidget);
 }
@@ -1312,6 +1421,7 @@ void DatabaseWidget::connectDatabaseSignals()
             SIGNAL(filePathChanged(QString, QString)),
 
             SIGNAL(databaseFilePathChanged(QString, QString)));
+    connect(m_db.data(), &Database::readOnlyChanged, this, &DatabaseWidget::databaseReadOnlyChanged);
     connect(m_db.data(), &Database::modified, this, &DatabaseWidget::databaseModified);
     connect(m_db.data(), &Database::modified, this, &DatabaseWidget::onDatabaseModified);
     connect(m_db.data(), &Database::databaseSaved, this, &DatabaseWidget::databaseSaved);
@@ -1489,6 +1599,14 @@ void DatabaseWidget::unlockDatabase(bool accepted)
     }
 
     if (senderDialog) {
+#ifdef KPXC_FEATURE_NETWORK
+        if (senderDialog->intent() == DatabaseOpenDialog::Intent::WebDavMerge) {
+            if (m_webDavSync) {
+                m_webDavSync->reviewUnlocked(senderDialog->database());
+            }
+            return;
+        }
+#endif
         if (senderDialog->intent() == DatabaseOpenDialog::Intent::Merge) {
             mergeDatabase(accepted);
             return;
@@ -1605,7 +1723,7 @@ void DatabaseWidget::switchToDatabaseReports()
 
 void DatabaseWidget::switchToDatabaseSettings()
 {
-    if (currentMode() != Mode::DatabaseSettingsMode) {
+    if (!m_db->isReadOnly() && currentMode() != Mode::DatabaseSettingsMode) {
         m_databaseSettingDialog->load(m_db);
         setCurrentWidget(m_databaseSettingDialog);
     }
@@ -1620,7 +1738,7 @@ void DatabaseWidget::switchToOpenDatabase()
 
 void DatabaseWidget::switchToOpenDatabase(const QString& filePath)
 {
-    m_databaseOpenWidget->load(filePath);
+    m_databaseOpenWidget->load(filePath, filePath == m_db->filePath() ? displayFilePath() : QString());
     setCurrentWidget(m_databaseOpenWidget);
 }
 
@@ -1776,7 +1894,7 @@ void DatabaseWidget::search(const QString& searchtext)
 
 void DatabaseWidget::saveSearch(const QString& searchtext)
 {
-    if (!m_db->isInitialized()) {
+    if (!m_db->isInitialized() || m_db->isReadOnly()) {
         return;
     }
 
@@ -1803,7 +1921,7 @@ void DatabaseWidget::saveSearch(const QString& searchtext)
 
 void DatabaseWidget::deleteSearch(const QString& name)
 {
-    if (m_db->isInitialized()) {
+    if (m_db->isInitialized() && !m_db->isReadOnly()) {
         m_db->metadata()->deleteSavedSearch(name);
     }
 }
@@ -1849,6 +1967,9 @@ void DatabaseWidget::onDatabaseModified()
 {
     refreshSearch();
     m_remoteSettings->loadSettings();
+    if (m_db->isReadOnly()) {
+        return;
+    }
     int autosaveDelayMs = m_db->metadata()->autosaveDelayMin() * 60 * 1000; // min to msec for QTimer
     bool autosaveAfterEveryChangeConfig = config()->get(Config::AutoSaveAfterEveryChange).toBool();
     if (autosaveDelayMs > 0 && autosaveAfterEveryChangeConfig) {
@@ -1868,7 +1989,7 @@ void DatabaseWidget::onAutosaveDelayTimeout()
 {
     const bool isAutosaveDelayEnabled = m_db->metadata()->autosaveDelayMin() > 0;
     const bool autosaveAfterEveryChangeConfig = config()->get(Config::AutoSaveAfterEveryChange).toBool();
-    if (!(isAutosaveDelayEnabled && autosaveAfterEveryChangeConfig)) {
+    if (m_db->isReadOnly() || !(isAutosaveDelayEnabled && autosaveAfterEveryChangeConfig)) {
         // User might disable the delay/autosave while the timer is running
         return;
     }
@@ -2068,8 +2189,9 @@ bool DatabaseWidget::lock()
     if (m_db->isModified()) {
         bool saved = false;
         // Attempt to save on exit, but don't block locking if it fails
-        if (config()->get(Config::AutoSaveOnExit).toBool()
-            || config()->get(Config::AutoSaveAfterEveryChange).toBool()) {
+        const bool autosave =
+            config()->get(Config::AutoSaveOnExit).toBool() || config()->get(Config::AutoSaveAfterEveryChange).toBool();
+        if (!m_db->isReadOnly() && autosave) {
             saved = save();
 
             if (!saved) {
@@ -2099,7 +2221,8 @@ bool DatabaseWidget::lock()
                                                MessageBox::Save | MessageBox::Discard | MessageBox::Cancel,
                                                MessageBox::Save);
             if (result == MessageBox::Save) {
-                if (!save()) {
+                saved = m_db->isReadOnly() ? saveAs() : save();
+                if (!saved) {
                     m_attemptingLock = false;
                     return false;
                 }
@@ -2108,7 +2231,8 @@ bool DatabaseWidget::lock()
                 return false;
             }
         }
-    } else if (m_db->hasNonDataChanges() && config()->get(Config::AutoSaveNonDataChanges).toBool()) {
+    } else if (!m_db->isReadOnly() && m_db->hasNonDataChanges()
+               && config()->get(Config::AutoSaveNonDataChanges).toBool()) {
         // Silently auto-save non-data changes, ignore errors
         QString errorMessage;
         performSave(errorMessage);
@@ -2566,24 +2690,38 @@ bool DatabaseWidget::saveAs()
             QDir::toNativeSeparators(FileDialog::getLastDir("db") + "/"
                                      + (defaultFileName.isEmpty() ? tr("Passwords").append(".kdbx") : defaultFileName));
     }
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        oldFilePath = QDir(FileDialog::getLastDir("db")).filePath(displayFileName());
+    }
+#endif
     const QString newFilePath = fileDialog()->getSaveFileName(
         this, tr("Save database as"), oldFilePath, tr("KeePass 2 Database").append(" (*.kdbx)"));
 
-    bool ok = false;
     if (!newFilePath.isEmpty()) {
         QString errorMessage;
-        if (!performSave(errorMessage, newFilePath)) {
-            showMessage(tr("Writing the database failed: %1").arg(errorMessage),
-                        MessageWidget::Error,
-                        true,
-                        MessageWidget::LongAutoHideTimeout);
+#ifdef KPXC_FEATURE_NETWORK
+        if (m_webDav && QFileInfo(newFilePath) == QFileInfo(m_webDav->localPath())) {
+            showErrorMessage(tr("Choose a location outside the WebDAV working copy."));
+            return false;
         }
+#endif
+        if (performSave(errorMessage, newFilePath)) {
+#ifdef KPXC_FEATURE_NETWORK
+            setWebDavSession(nullptr);
+#endif
+            return true;
+        }
+        showMessage(tr("Writing the database failed: %1").arg(errorMessage),
+                    MessageWidget::Error,
+                    true,
+                    MessageWidget::LongAutoHideTimeout);
     }
 
-    return ok;
+    return false;
 }
 
-bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
+bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName, bool saveCopy)
 {
     QPointer<QWidget> focusWidget(qApp->focusWidget());
 
@@ -2624,8 +2762,20 @@ bool DatabaseWidget::performSave(QString& errorMessage, const QString& fileName)
     }
 
     bool ok;
-    if (fileName.isEmpty()) {
+    if (saveCopy) {
+        ok = m_db->saveCopy(fileName, &errorMessage);
+    } else if (fileName.isEmpty()) {
+#ifdef KPXC_FEATURE_NETWORK
+        if (m_webDav) {
+            saveAction = Database::Atomic;
+        }
+#endif
         ok = m_db->save(saveAction, backupFilePath, &errorMessage);
+#ifdef KPXC_FEATURE_NETWORK
+        if (ok && m_webDav) {
+            m_webDav->localSaved();
+        }
+#endif
     } else {
         ok = m_db->saveAs(fileName, saveAction, backupFilePath, &errorMessage);
     }
@@ -2667,20 +2817,15 @@ bool DatabaseWidget::saveBackup()
         return false;
     }
 
-    // Record modified state so we can restore after save
-    bool modified = m_db->isModified();
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav && QFileInfo(newFilePath) == QFileInfo(m_webDav->localPath())) {
+        showErrorMessage(tr("Choose a location outside the WebDAV working copy."));
+        return false;
+    }
+#endif
 
     QString error;
-    bool ok = m_db->saveAs(newFilePath, Database::DirectWrite, {}, &error);
-
-    // Restore database to original state
-    m_db->setFilePath(oldFilePath);
-    if (modified) {
-        // Source database is marked as clean when copy is saved, even if source has unsaved changes
-        m_db->markAsModified();
-    }
-
-    if (!ok) {
+    if (!performSave(error, newFilePath, true)) {
         // Failed to save backup, post the error
         showErrorMessage(tr("Failed to save backup database: %1").arg(error));
         return false;

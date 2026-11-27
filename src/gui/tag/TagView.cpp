@@ -73,7 +73,7 @@ void TagView::setDatabase(QSharedPointer<Database> db)
 void TagView::contextMenuRequested(const QPoint& pos)
 {
     auto index = indexAt(pos);
-    if (!index.isValid()) {
+    if (!index.isValid() || m_db->isReadOnly()) {
         return;
     }
 

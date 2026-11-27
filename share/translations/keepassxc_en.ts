@@ -1675,6 +1675,10 @@ Backup database located at %2</source>
         <source>No file path was provided.</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>This database is read-only. Save a copy to a different file.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>DatabaseOpenDialog</name>
@@ -2725,6 +2729,26 @@ This is definitely a bug, please report it to the developers.</source>
         <comment>Database tab name modifier</comment>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Login is valid for this session. The system credential store could not remember it on this device.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The system credential store is unavailable. Any previously saved login could not be removed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The system credential store could not remove the WebDAV login.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saved WebDAV login removed from this device.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Opening WebDAV database…</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>DatabaseWidget</name>
@@ -2985,6 +3009,18 @@ Disable safe saves and try again?</source>
     </message>
     <message>
         <source>Merge canceled, no changes were made.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Merge WebDAV Changes…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unlock the remote version to review its changes. The merged file will use the master key of your open database.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Choose a location outside the WebDAV working copy.</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -6512,6 +6548,22 @@ This version is not meant for production use.</source>
             <numerusform></numerusform>
             <numerusform></numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Open from WebDAV…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Retry WebDAV Sync</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Update WebDAV Login…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Forget WebDAV Login…</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -10670,6 +10722,167 @@ Example: JBSWY3DPEHPK3PXP</source>
     </message>
 </context>
 <context>
+    <name>WebDavCredentials</name>
+    <message>
+        <source>KeePassXC WebDAV login</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>WebDavDialog</name>
+    <message>
+        <source>Remember login on this device</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open from WebDAV</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Update WebDAV Login</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>HTTPS database file URL:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebDAV username:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebDAV password:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Enter an HTTPS file URL without embedded credentials, a query, or a fragment.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Enter the WebDAV username originally used for this connection.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>WebDavSession</name>
+    <message>
+        <source>Enter a full HTTPS database URL without credentials, a query or a fragment.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not prepare a private folder for this WebDAV database.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This WebDAV database is already in use, or its working folder cannot be locked.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The saved WebDAV connection is invalid.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not save the WebDAV synchronization state.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The encrypted WebDAV working copy could not be read.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Saved locally, waiting to sync</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not create a private WebDAV transfer file.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not read the saved database for upload.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The saved database or its remote version could not be verified.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Syncing…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Checking WebDAV database…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The WebDAV download could not be written to disk.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebDAV login required</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebDAV unavailable. Offline</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebDAV request failed (HTTP %1).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The WebDAV response does not contain a readable KDBX database.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not save the downloaded database.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remote changes are ready to merge</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The saved WebDAV working copy could not be read.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Read-only: the server does not provide a strong ETag</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remote changes need to be merged</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Synced to WebDAV</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loaded changes from WebDAV</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Synced</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Read-only: the server rejected its current ETag. Changes are saved locally.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unavailable WebDAV database (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (connection %2)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not establish a trusted HTTPS connection to the WebDAV server.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>WelcomeWidget</name>
     <message>
         <source>Start storing your passwords securely in a KeePassXC database</source>
@@ -10697,6 +10910,10 @@ Example: JBSWY3DPEHPK3PXP</source>
     </message>
     <message>
         <source>Import File</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open from WebDAV…</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

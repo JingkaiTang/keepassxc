@@ -38,16 +38,21 @@ namespace FdoSecrets
     constexpr char PlainCipher::Algorithm[];
     constexpr char DhIetf1024Sha256Aes128CbcPkcs7::Algorithm[];
 
-    DhIetf1024Sha256Aes128CbcPkcs7::DhIetf1024Sha256Aes128CbcPkcs7(const QByteArray& clientPublicKey)
+    DhIetf1024Sha256Aes128CbcPkcs7::DhIetf1024Sha256Aes128CbcPkcs7()
     {
         try {
             m_privateKey.reset(new Botan::DH_PrivateKey(*randomGen()->getRng(), Botan::DL_Group("modp/ietf/1024")));
-            m_valid = updateClientPublicKey(clientPublicKey);
         } catch (std::exception& e) {
             qCritical("Failed to derive DH key: %s", e.what());
             m_privateKey.reset();
             m_valid = false;
         }
+    }
+
+    DhIetf1024Sha256Aes128CbcPkcs7::DhIetf1024Sha256Aes128CbcPkcs7(const QByteArray& clientPublicKey)
+        : DhIetf1024Sha256Aes128CbcPkcs7()
+    {
+        updateClientPublicKey(clientPublicKey);
     }
 
     bool DhIetf1024Sha256Aes128CbcPkcs7::updateClientPublicKey(const QByteArray& clientPublicKey)
@@ -75,8 +80,10 @@ namespace FdoSecrets
                                       salt.size());
             m_aesKey = QByteArray(reinterpret_cast<char*>(aesKey.data()), aesKey.size());
 #endif
+            m_valid = true;
             return true;
         } catch (std::exception& e) {
+            m_valid = false;
             qCritical("Failed to update client public key: %s", e.what());
             return false;
         }
@@ -129,7 +136,12 @@ namespace FdoSecrets
 
     QVariant DhIetf1024Sha256Aes128CbcPkcs7::negotiationOutput() const
     {
-        if (m_valid) {
+        return m_valid ? QVariant(publicKey()) : QVariant{};
+    }
+
+    QByteArray DhIetf1024Sha256Aes128CbcPkcs7::publicKey() const
+    {
+        if (m_privateKey) {
             auto pubkey = m_privateKey->public_value();
             return QByteArray(reinterpret_cast<char*>(pubkey.data()), pubkey.size());
         }

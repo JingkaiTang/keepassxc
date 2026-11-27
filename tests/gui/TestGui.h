@@ -26,6 +26,7 @@ class Database;
 class DatabaseTabWidget;
 class DatabaseWidget;
 class QAbstractItemView;
+class MockWebDavServer;
 
 class TestGui : public QObject
 {
@@ -43,6 +44,12 @@ private slots:
     void testRemoteSyncDatabaseSameKey();
     void testRemoteSyncDatabaseRequiresPassword();
     void testOpenRemoteDatabase();
+#ifdef KPXC_FEATURE_NETWORK
+    void testWebDavOpenDialog_data();
+    void testWebDavOpenDialog();
+    void testWebDavDatabase_data();
+    void testWebDavDatabase();
+#endif
     void testAutoreloadDatabase();
     void testTabs();
     void testEditEntry();
@@ -89,6 +96,9 @@ private:
                     Qt::MouseButton button,
                     Qt::KeyboardModifiers stateKey = {});
     void checkSaveDatabase();
+#ifdef KPXC_FEATURE_NETWORK
+    void checkWebDavMerge(MockWebDavServer& server, const QString& scenario);
+#endif
     void checkStatusBarText(const QString& textFragment);
     void prepareAndTriggerRemoteSync();
 

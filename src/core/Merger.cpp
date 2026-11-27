@@ -328,6 +328,52 @@ Merger::resolveGroupConflict(const MergeContext& context, const Group* sourceChi
     return changes;
 }
 
+bool Merger::applyEntryVersion(const QUuid& uuid, const Entry* selected)
+{
+    auto* root = m_context.m_targetRootGroup.data();
+    Group* group = nullptr;
+    if (selected) {
+        // Keeping an entry whose parent was deleted also restores the necessary group path.
+        QList<const Group*> missing;
+        for (auto* parent = selected->group(); parent && !group; parent = parent->parentGroup()) {
+            group = root->findGroupByUuid(parent->uuid());
+            if (!group) {
+                missing.prepend(parent);
+            }
+        }
+        if (!group) {
+            return false;
+        }
+        QSet<QUuid> icons;
+        icons.insert(selected->iconUuid());
+        for (const auto* history : selected->historyItems()) {
+            icons.insert(history->iconUuid());
+        }
+        for (const auto* parent : missing) {
+            icons.insert(parent->iconUuid());
+        }
+        const auto* sourceMetadata = selected->database()->metadata();
+        for (const auto& icon : icons) {
+            auto* metadata = root->database()->metadata();
+            if (!icon.isNull() && !metadata->hasCustomIcon(icon) && sourceMetadata->hasCustomIcon(icon)) {
+                metadata->addCustomIcon(icon, sourceMetadata->customIcon(icon));
+            }
+        }
+        for (const auto* parent : missing) {
+            auto* restored = parent->clone(Entry::CloneNoFlags, Group::CloneNoFlags);
+            moveGroup(restored, group);
+            group = restored;
+        }
+    }
+    if (auto* existing = root->findEntryByUuid(uuid)) {
+        eraseEntry(existing);
+    }
+    if (selected) {
+        moveEntry(selected->clone(Entry::CloneIncludeHistory), group);
+    }
+    return true;
+}
+
 void Merger::moveEntry(Entry* entry, Group* targetGroup)
 {
     if (m_dryRun) {

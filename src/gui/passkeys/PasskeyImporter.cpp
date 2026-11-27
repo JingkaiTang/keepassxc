@@ -118,6 +118,10 @@ bool PasskeyImporter::showImportDialog(QSharedPointer<Database>& database,
         db = database;
     }
 
+    if (!db || db->isReadOnly() || (entry && entry->database() && entry->database()->isReadOnly())) {
+        return false;
+    }
+
     // Store to entry if given directly
     if (entry) {
         browserService()->addPasskeyToEntry(

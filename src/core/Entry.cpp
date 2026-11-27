@@ -971,7 +971,7 @@ bool Entry::equals(const Entry* other, CompareItemOptions options) const
     return true;
 }
 
-QStringList Entry::calculateDifference(const Entry* other)
+QStringList Entry::calculateDifference(const Entry* other) const
 {
     QStringList modifiedFields;
 

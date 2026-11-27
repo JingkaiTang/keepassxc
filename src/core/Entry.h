@@ -185,7 +185,7 @@ public:
      *
      * @return The list of attribute names that are different between the two entries
      */
-    QStringList calculateDifference(const Entry* other);
+    QStringList calculateDifference(const Entry* other) const;
 
     enum CloneFlag
     {

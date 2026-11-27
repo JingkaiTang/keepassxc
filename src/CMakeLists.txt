@@ -311,6 +311,12 @@ endif()
 
 if(KPXC_FEATURE_NETWORK)
     list(APPEND gui_SOURCES
+            gui/remote/WebDavDialog.cpp
+            networking/WebDavCredentials.cpp
+            networking/WebDavWrite.cpp
+            gui/remote/WebDavSync.cpp
+            networking/WebDavMerge.cpp
+            networking/WebDavSession.cpp
             networking/HibpDownloader.cpp
             networking/NetworkManager.cpp
             networking/UpdateChecker.cpp
@@ -388,6 +394,9 @@ if(HAIKU)
 endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(keepassxc_core Qt6::DBus ${LIBUSB_LIBRARIES})
+    if(KPXC_FEATURE_NETWORK AND NOT KPXC_FEATURE_FDOSECRETS)
+        target_sources(keepassxc_gui PRIVATE fdosecrets/objects/SessionCipher.cpp)
+    endif()
     if("${CMAKE_SYSTEM}" MATCHES "Linux")
         target_link_libraries(keepassxc_core ${KEYUTILS_LIBRARIES})
     endif()
@@ -397,6 +406,9 @@ if(UNIX AND NOT APPLE)
 endif()
 if(WIN32)
     target_link_libraries(keepassxc_gui Wtsapi32.lib Ws2_32.lib)
+    if(KPXC_FEATURE_NETWORK)
+        target_link_libraries(keepassxc_gui Advapi32.lib)
+    endif()
     if (WINSDK)
         target_link_libraries(keepassxc_gui WindowsApp.lib)
     endif()

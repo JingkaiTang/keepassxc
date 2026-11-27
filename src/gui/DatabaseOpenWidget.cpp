@@ -237,18 +237,19 @@ void DatabaseOpenWidget::showMessage(const QString& text, MessageWidget::Message
     m_ui->messageWidget->showMessage(text, type, autoHideTimeout);
 }
 
-void DatabaseOpenWidget::load(const QString& filename)
+void DatabaseOpenWidget::load(const QString& filename, const QString& displayPath)
 {
     clearForms();
 
     m_filename = filename;
+    m_displayPath = displayPath;
 
     // Read public headers
     QString error;
     m_db.reset(new Database());
     m_db->open(m_filename, nullptr, &error);
 
-    m_ui->fileNameLabel->setRawText(m_filename);
+    m_ui->fileNameLabel->setRawText(m_displayPath.isEmpty() ? m_filename : m_displayPath);
 
     // Set the public name if defined
     auto label = tr("Unlock KeePassXC Database");
@@ -659,5 +660,5 @@ void DatabaseOpenWidget::resetQuickUnlock()
     if (!m_db.isNull()) {
         getQuickUnlock()->reset(m_db->publicUuid());
     }
-    load(m_filename);
+    load(m_filename, m_displayPath);
 }

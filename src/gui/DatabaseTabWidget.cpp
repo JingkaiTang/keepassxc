@@ -32,6 +32,13 @@
 #include "gui/FileDialog.h"
 #include "gui/MessageBox.h"
 #include "gui/export/ExportDialog.h"
+#ifdef KPXC_FEATURE_NETWORK
+#include "gui/remote/WebDavDialog.h"
+#include "networking/WebDavCredentials.h"
+#include "networking/WebDavSession.h"
+#include <QCoreApplication>
+#include <QtConcurrentRun>
+#endif
 #ifdef Q_OS_MACOS
 #include "gui/osutils/macutils/MacUtils.h"
 #endif
@@ -143,6 +150,273 @@ void DatabaseTabWidget::openDatabase()
     }
 }
 
+#ifdef KPXC_FEATURE_NETWORK
+// Use one worker for the system vault. A write, forget, or subsequent read of the
+// same connection must take effect in request order, including across closed tabs.
+static QThreadPool* webDavCredentialPool()
+{
+    static QPointer<QThreadPool> pool;
+    if (!pool) {
+        pool = new QThreadPool(QCoreApplication::instance());
+        pool->setMaxThreadCount(1);
+    }
+    return pool;
+}
+
+template <typename Operation, typename Callback>
+void DatabaseTabWidget::runWebDavCredentialTask(WebDavSession* session, Operation operation, Callback completed)
+{
+    const auto reference = session->reference();
+    const auto revision = m_webDavConnections.value(reference).loginRevision;
+    auto result = QtConcurrent::run(webDavCredentialPool(), std::move(operation));
+    result.then(
+        this,
+        [this, reference, revision, session = QPointer<WebDavSession>(session), completed = std::move(completed)](
+            std::invoke_result_t<Operation> value) {
+            const auto connection = m_webDavConnections.find(reference);
+            if (session && connection != m_webDavConnections.end() && connection->session == session
+                && connection->loginRevision == revision && (!connection->ready || connection->widget)) {
+                completed(*connection, value);
+            }
+        });
+}
+
+void DatabaseTabWidget::openWebDav()
+{
+    if (m_webDavOpenDialog) {
+        m_webDavOpenDialog->raise();
+        m_webDavOpenDialog->activateWindow();
+        return;
+    }
+    auto dialog = new WebDavDialog(this);
+    m_webDavOpenDialog = dialog;
+    connect(dialog, &QDialog::accepted, this, [this, dialog] {
+        const auto reference = WebDavSession::referenceFor(dialog->url(), dialog->user());
+        startWebDav(reference, dialog, false);
+    });
+    dialog->open();
+}
+
+void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* login, bool inBackground)
+{
+    auto existing = m_webDavConnections.find(reference);
+    if (existing != m_webDavConnections.end()) {
+        if (existing->widget) {
+            if (!inBackground) {
+                setCurrentWidget(existing->widget);
+            }
+        } else if (existing->ready) {
+            attachWebDav(existing->session, inBackground);
+        }
+        return;
+    }
+
+    auto session = new WebDavSession(reference, login ? login->url() : QUrl(), this);
+    m_webDavConnections[reference].session = session;
+    connect(
+        session,
+        &WebDavSession::ready,
+        this,
+        [this, session, inBackground] {
+            m_webDavConnections[session->reference()].ready = true;
+            attachWebDav(session, inBackground);
+        },
+        Qt::SingleShotConnection);
+    connect(session, &WebDavSession::failed, this, [this, session](const QString& message) {
+        emit messageGlobal(message, MessageWidget::Error);
+        if (!m_webDavConnections.value(session->reference()).ready) {
+            releaseWebDav(session->reference());
+        }
+    });
+    connect(session, &WebDavSession::authenticationRequired, this, [this, session] {
+        auto connection = m_webDavConnections.value(session->reference());
+        disconnect(connection.rememberLogin);
+        if (!connection.ready || connection.widget) {
+            enterWebDavLogin(session);
+        }
+    });
+    connect(session, &WebDavSession::statusChanged, this, [this, session] {
+        auto connection = m_webDavConnections.value(session->reference());
+        if (connection.widget) {
+            int index = indexOf(connection.widget);
+            if (index >= 0) {
+                updateTabToolTip(index, connection.widget);
+                if (index == currentIndex()) {
+                    emit webDavStatusChanged();
+                }
+            }
+        } else if (connection.ready && !session->hasPendingUpload()) {
+            // The final reply can still confirm an updated login after publishing "Synced".
+            QTimer::singleShot(0, session, [this, session] {
+                const auto current = m_webDavConnections.value(session->reference());
+                if (current.session == session && !current.widget && !session->hasPendingUpload()) {
+                    releaseWebDav(session->reference());
+                }
+            });
+        }
+    });
+
+    connect(session, &WebDavSession::notice, this, [this, session](const QString& message) {
+        if (auto* widget = m_webDavConnections.value(session->reference()).widget.data()) {
+            emit webDavNotice(widget, message);
+        }
+    });
+    if (!inBackground) {
+        emit webDavNotice(nullptr, tr("Opening WebDAV database…"));
+    }
+    if (login) {
+        applyWebDavLogin(session, login);
+        session->open();
+        return;
+    }
+
+    struct SavedLogin
+    {
+        QString user;
+        QString password;
+        WebDavCredentials::Result result;
+    };
+    runWebDavCredentialTask(
+        session,
+        [reference] {
+            SavedLogin stored;
+            stored.result = WebDavCredentials::read(reference, stored.user, stored.password);
+            return stored;
+        },
+        [session](WebDavConnection& connection, const SavedLogin& stored) {
+            if (stored.result == WebDavCredentials::Result::Success) {
+                connection.user = stored.user;
+                session->setCredentials(stored.user, stored.password);
+            }
+            session->open();
+        });
+}
+
+void DatabaseTabWidget::attachWebDav(WebDavSession* session, bool inBackground)
+{
+    auto widget = new DatabaseWidget(QSharedPointer<Database>::create(session->localPath()), this);
+    auto reference = session->reference();
+    m_webDavConnections[reference].widget = widget;
+    widget->setWebDavSession(session);
+    connect(widget, &DatabaseWidget::databaseReferenceChanged, this, [this, reference, widget, session] {
+        if (widget->webDavSession() != session && m_webDavConnections.value(reference).widget == widget) {
+            m_webDavConnections[reference].widget.clear();
+            if (!session->hasPendingUpload()) {
+                releaseWebDav(reference);
+            }
+        }
+    });
+    addDatabaseTab(widget, inBackground);
+    updateLastDatabases(widget);
+}
+
+void DatabaseTabWidget::releaseWebDav(const QString& reference)
+{
+    const auto connection = m_webDavConnections.take(reference);
+    if (connection.session) {
+        disconnect(connection.session, nullptr, this, nullptr);
+        connection.session->deleteLater();
+    }
+    if (connection.dialog) {
+        connection.dialog->reject();
+    }
+}
+
+void DatabaseTabWidget::applyWebDavLogin(WebDavSession* session, WebDavDialog* dialog)
+{
+    const auto reference = session->reference();
+    auto& connection = m_webDavConnections[reference];
+    disconnect(connection.rememberLogin);
+    ++connection.loginRevision;
+    connection.user = dialog->user();
+    const auto password = dialog->password();
+    const auto remember = dialog->remember();
+    session->setCredentials(connection.user, password);
+    connection.rememberLogin = connect(
+        session,
+        &WebDavSession::authenticated,
+        this,
+        [this, session, reference, user = connection.user, password, remember] {
+            runWebDavCredentialTask(
+                session,
+                [reference, user, password, remember] {
+                    return remember ? WebDavCredentials::write(reference, user, password)
+                                    : WebDavCredentials::remove(reference);
+                },
+                [this, remember](WebDavConnection&, WebDavCredentials::Result result) {
+                    if (result == WebDavCredentials::Result::Unavailable) {
+                        const auto message =
+                            remember ? tr("Login is valid for this session. The system credential store "
+                                          "could not remember it on this device.")
+                                     : tr("The system credential store is unavailable. Any previously saved "
+                                          "login could not be removed.");
+                        emit messageGlobal(message, MessageWidget::Warning);
+                    }
+                });
+        },
+        Qt::SingleShotConnection);
+}
+
+void DatabaseTabWidget::enterWebDavLogin(WebDavSession* session)
+{
+    const auto reference = session->reference();
+    auto& connection = m_webDavConnections[reference];
+    if (connection.dialog) {
+        connection.dialog->raise();
+        connection.dialog->activateWindow();
+        return;
+    }
+    auto dialog = new WebDavDialog(this, reference, session->url(), connection.user);
+    connection.dialog = dialog;
+    connect(dialog, &QDialog::finished, session, [this, session, dialog, reference](int result) {
+        auto it = m_webDavConnections.find(reference);
+        if (it == m_webDavConnections.end() || it->session != session || it->dialog != dialog) {
+            return;
+        }
+        it->dialog.clear();
+        if (result == QDialog::Accepted) {
+            applyWebDavLogin(session, dialog);
+            session->retry();
+        } else if (!it->ready) {
+            releaseWebDav(reference);
+        }
+    });
+    dialog->open();
+}
+
+void DatabaseTabWidget::updateWebDavCredentials()
+{
+    auto widget = currentDatabaseWidget();
+    if (widget && widget->webDavSession()) {
+        enterWebDavLogin(widget->webDavSession());
+    }
+}
+
+void DatabaseTabWidget::forgetWebDavCredentials()
+{
+    auto widget = currentDatabaseWidget();
+    if (!widget || !widget->webDavSession()) {
+        return;
+    }
+    auto session = widget->webDavSession();
+    const auto reference = session->reference();
+    auto& connection = m_webDavConnections[reference];
+    disconnect(connection.rememberLogin);
+    ++connection.loginRevision;
+    runWebDavCredentialTask(
+        session,
+        [reference] { return WebDavCredentials::remove(reference); },
+        [this](WebDavConnection& current, WebDavCredentials::Result result) {
+            if (result == WebDavCredentials::Result::Unavailable) {
+                emit messageGlobal(tr("The system credential store could not remove the WebDAV login."),
+                                   MessageWidget::Error);
+            } else if (current.widget) {
+                emit webDavNotice(current.widget, tr("Saved WebDAV login removed from this device."));
+            }
+        });
+}
+#endif
+
 /**
  * Add a new database tab or switch to an existing one if the
  * database has been opened already.
@@ -158,6 +432,12 @@ void DatabaseTabWidget::addDatabaseTab(const QString& filePath,
                                        const QString& password,
                                        const QString& keyfile)
 {
+#ifdef KPXC_FEATURE_NETWORK
+    if (WebDavSession::isReference(filePath)) {
+        startWebDav(filePath, nullptr, inBackground);
+        return;
+    }
+#endif
     QString cleanFilePath = QDir::toNativeSeparators(filePath);
     QFileInfo fileInfo(cleanFilePath);
     QString canonicalFilePath = fileInfo.canonicalFilePath();
@@ -185,7 +465,7 @@ void DatabaseTabWidget::addDatabaseTab(const QString& filePath,
     auto* dbWidget = new DatabaseWidget(QSharedPointer<Database>::create(cleanFilePath), this);
     addDatabaseTab(dbWidget, inBackground);
     dbWidget->performUnlockDatabase(password, keyfile);
-    updateLastDatabases(dbWidget->database());
+    updateLastDatabases(dbWidget);
 }
 
 /**
@@ -245,7 +525,13 @@ void DatabaseTabWidget::addDatabaseTab(DatabaseWidget* dbWidget, bool inBackgrou
             SLOT(updateTabName()));
     connect(dbWidget, SIGNAL(databaseModified()), SLOT(updateTabName()));
     connect(dbWidget, SIGNAL(databaseSaved()), SLOT(updateTabName()));
-    connect(dbWidget, SIGNAL(databaseSaved()), SLOT(updateLastDatabases()));
+    connect(dbWidget, &DatabaseWidget::databaseSaved, this, [this, dbWidget] { updateLastDatabases(dbWidget); });
+#ifdef KPXC_FEATURE_NETWORK
+    connect(dbWidget, &DatabaseWidget::databaseReferenceChanged, this, [this, dbWidget] {
+        updateLastDatabases(dbWidget);
+        updateTabName(indexOf(dbWidget));
+    });
+#endif
     connect(dbWidget, SIGNAL(databaseUnlocked()), SLOT(updateTabName()));
     connect(dbWidget, SIGNAL(databaseUnlocked()), SLOT(emitDatabaseLockChanged()));
     connect(dbWidget, SIGNAL(databaseLocked()), SLOT(updateTabName()));
@@ -410,6 +696,18 @@ bool DatabaseTabWidget::closeDatabaseTab(DatabaseWidget* dbWidget)
     }
 
     removeTab(tabIndex);
+#ifdef KPXC_FEATURE_NETWORK
+    if (auto session = dbWidget->webDavSession()) {
+        auto& connection = m_webDavConnections[session->reference()];
+        connection.widget.clear();
+        if (connection.dialog) {
+            connection.dialog->reject();
+        }
+        if (!session->hasPendingUpload()) {
+            releaseWebDav(session->reference());
+        }
+    }
+#endif
     dbWidget->deleteLater();
     toggleTabbar();
     emit databaseClosed(filePath);
@@ -455,7 +753,7 @@ bool DatabaseTabWidget::saveDatabaseAs(int index)
     auto* dbWidget = databaseWidgetFromIndex(index);
     bool ok = dbWidget->saveAs();
     if (ok) {
-        updateLastDatabases(dbWidget->database());
+        updateLastDatabases(dbWidget);
     }
     return ok;
 }
@@ -469,7 +767,7 @@ bool DatabaseTabWidget::saveDatabaseBackup(int index)
     auto* dbWidget = databaseWidgetFromIndex(index);
     bool ok = dbWidget->saveBackup();
     if (ok) {
-        updateLastDatabases(dbWidget->database());
+        updateLastDatabases(dbWidget);
     }
     return ok;
 }
@@ -633,6 +931,12 @@ bool DatabaseTabWidget::isModified(int index) const
 
 bool DatabaseTabWidget::canSave(int index) const
 {
+#ifdef KPXC_FEATURE_NETWORK
+    auto widget = databaseWidgetFromIndex(index == -1 ? currentIndex() : index);
+    if (widget && widget->webDavSession() && widget->webDavSession()->isReadOnly()) {
+        return false;
+    }
+#endif
     return isModified(index);
 }
 
@@ -694,7 +998,7 @@ void DatabaseTabWidget::updateTabName(int index)
     }
     index = indexOf(dbWidget);
     setTabText(index, Tools::escapeAccelerators(tabName(index)));
-    setTabToolTip(index, dbWidget->displayFilePath());
+    updateTabToolTip(index, dbWidget);
     auto iconIndex = dbWidget->database()->publicIcon();
     if (iconIndex >= 0 && iconIndex < databaseIcons()->count()) {
         setTabIcon(index, databaseIcons()->icon(iconIndex));
@@ -702,6 +1006,17 @@ void DatabaseTabWidget::updateTabName(int index)
         setTabIcon(index, {});
     }
     emit tabNameChanged();
+}
+
+void DatabaseTabWidget::updateTabToolTip(int index, DatabaseWidget* dbWidget)
+{
+    auto tooltip = dbWidget->displayFilePath();
+#ifdef KPXC_FEATURE_NETWORK
+    if (auto session = dbWidget->webDavSession()) {
+        tooltip += "\n" + session->statusText();
+    }
+#endif
+    setTabToolTip(index, tooltip);
 }
 
 DatabaseWidget* DatabaseTabWidget::databaseWidgetFromIndex(int index) const
@@ -876,12 +1191,12 @@ void DatabaseTabWidget::relockPendingDatabase()
     m_dbWidgetPendingLock = nullptr;
 }
 
-void DatabaseTabWidget::updateLastDatabases(const QSharedPointer<Database>& database)
+void DatabaseTabWidget::updateLastDatabases(DatabaseWidget* widget)
 {
-    if (database->isTemporaryDatabase() || database->filePath().isEmpty()) {
+    const auto filename = widget->databaseReference();
+    if (widget->database()->isTemporaryDatabase() || filename.isEmpty()) {
         return;
     }
-    auto filename = database->filePath();
     if (!config()->get(Config::RememberLastDatabases).toBool()) {
         config()->remove(Config::LastDatabases);
     } else {
@@ -893,15 +1208,6 @@ void DatabaseTabWidget::updateLastDatabases(const QSharedPointer<Database>& data
             lastDatabases.removeLast();
         }
         config()->set(Config::LastDatabases, lastDatabases);
-    }
-}
-
-void DatabaseTabWidget::updateLastDatabases()
-{
-    auto dbWidget = currentDatabaseWidget();
-
-    if (dbWidget) {
-        updateLastDatabases(dbWidget->database());
     }
 }
 

@@ -54,6 +54,10 @@
 #include "keeshare/SettingsPageKeeShare.h"
 #include "keys/drivers/YubiKey.h"
 
+#ifdef KPXC_FEATURE_NETWORK
+#include "networking/WebDavSession.h"
+#endif
+
 #ifdef KPXC_FEATURE_UPDATES
 #include "gui/UpdateCheckDialog.h"
 #include "networking/UpdateChecker.h"
@@ -415,6 +419,7 @@ MainWindow::MainWindow()
     m_actionMultiplexer.connect(SIGNAL(groupChanged()), this, SLOT(updateMenuActionState()));
     m_actionMultiplexer.connect(SIGNAL(entrySelectionChanged()), this, SLOT(updateMenuActionState()));
     m_actionMultiplexer.connect(SIGNAL(databaseNonDataChanged()), this, SLOT(updateMenuActionState()));
+    m_actionMultiplexer.connect(SIGNAL(databaseReadOnlyChanged()), this, SLOT(updateMenuActionState()));
     m_actionMultiplexer.connect(SIGNAL(groupContextMenuRequested(QPoint)), this, SLOT(showGroupContextMenu(QPoint)));
     m_actionMultiplexer.connect(SIGNAL(entryContextMenuRequested(QPoint)), this, SLOT(showEntryContextMenu(QPoint)));
     m_actionMultiplexer.connect(SIGNAL(groupChanged()), this, SLOT(updateEntryCountLabel()));
@@ -447,6 +452,13 @@ MainWindow::MainWindow()
 
     connect(m_ui->actionDatabaseNew, SIGNAL(triggered()), m_ui->tabWidget, SLOT(newDatabase()));
     connect(m_ui->actionDatabaseOpen, SIGNAL(triggered()), m_ui->tabWidget, SLOT(openDatabase()));
+#ifdef KPXC_FEATURE_NETWORK
+    m_ui->actionDatabaseOpenWebDav->setIcon(icons()->icon("remote-sync"));
+    connect(m_ui->actionDatabaseOpenWebDav, &QAction::triggered, m_ui->tabWidget, &DatabaseTabWidget::openWebDav);
+    connect(m_ui->welcomeWidget, &WelcomeWidget::openWebDav, m_ui->tabWidget, &DatabaseTabWidget::openWebDav);
+#else
+    m_ui->actionDatabaseOpenWebDav->setVisible(false);
+#endif
     connect(m_ui->actionDatabaseSave, SIGNAL(triggered()), m_ui->tabWidget, SLOT(saveDatabase()));
     connect(m_ui->actionDatabaseSaveAs, SIGNAL(triggered()), m_ui->tabWidget, SLOT(saveDatabaseAs()));
     connect(m_ui->actionDatabaseSaveBackup, SIGNAL(triggered()), m_ui->tabWidget, SLOT(saveDatabaseBackup()));
@@ -654,6 +666,29 @@ MainWindow::MainWindow()
     m_statusBarLabel = new QLabel(statusBar());
     m_statusBarLabel->setObjectName("statusBarLabel");
     statusBar()->addPermanentWidget(m_statusBarLabel);
+#ifdef KPXC_FEATURE_NETWORK
+    m_webDavStatusLabel = new QLabel(statusBar());
+    m_webDavStatusLabel->setObjectName("webDavPendingStatus");
+    m_webDavStatusLabel->setTextFormat(Qt::PlainText);
+    statusBar()->addWidget(m_webDavStatusLabel, 1);
+    connect(m_ui->tabWidget, &DatabaseTabWidget::webDavStatusChanged, this, &MainWindow::updateWebDavStatusBar);
+    connect(m_ui->tabWidget, &DatabaseTabWidget::tabNameChanged, this, &MainWindow::updateWebDavStatusBar);
+    auto changeStatusContext = [this] {
+        statusBar()->clearMessage();
+        updateWebDavStatusBar();
+    };
+    connect(m_ui->tabWidget, &QTabWidget::currentChanged, this, changeStatusContext);
+    connect(m_ui->stackedWidget, &QStackedWidget::currentChanged, this, changeStatusContext);
+    connect(
+        m_ui->tabWidget, &DatabaseTabWidget::webDavNotice, this, [this](DatabaseWidget* widget, const QString& text) {
+            if (!widget
+                || (m_ui->stackedWidget->currentIndex() == DatabaseTabScreen
+                    && widget == m_ui->tabWidget->currentDatabaseWidget() && !widget->isLocked())) {
+                statusBar()->showMessage(text, 3000);
+            }
+        });
+    updateWebDavStatusBar();
+#endif
 
     restoreConfigState();
     updateMenuActionState();
@@ -672,13 +707,21 @@ MainWindow::~MainWindow()
 void MainWindow::restoreConfigState()
 {
     if (config()->get(Config::OpenPreviousDatabasesOnStartup).toBool()) {
-        const QStringList fileNames = config()->get(Config::LastOpenedDatabases).toStringList();
-        for (const QString& filename : fileNames) {
+        const auto fileNames = config()->get(Config::LastOpenedDatabases).toStringList();
+        const auto lastActiveFile = config()->get(Config::LastActiveDatabase).toString();
+        for (const auto& filename : fileNames) {
+#ifdef KPXC_FEATURE_NETWORK
+            if (WebDavSession::isReference(filename)) {
+                if (filename != lastActiveFile) {
+                    m_ui->tabWidget->addDatabaseTab(filename, true);
+                }
+                continue;
+            }
+#endif
             if (!filename.isEmpty() && QFile::exists(filename)) {
-                openDatabase(filename);
+                m_ui->tabWidget->addDatabaseTab(filename, true);
             }
         }
-        auto lastActiveFile = config()->get(Config::LastActiveDatabase).toString();
         if (!lastActiveFile.isEmpty()) {
             openDatabase(lastActiveFile);
         }
@@ -739,8 +782,13 @@ void MainWindow::updateLastDatabasesMenu()
     m_ui->menuRecentDatabases->clear();
 
     const QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
+    QHash<QString, QString> labels;
+#ifdef KPXC_FEATURE_NETWORK
+    labels = WebDavSession::recentDisplayNames(lastDatabases);
+#endif
     for (const QString& database : lastDatabases) {
-        QAction* action = m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(database));
+        QAction* action =
+            m_ui->menuRecentDatabases->addAction(Tools::escapeAccelerators(labels.value(database, database)));
         action->setData(database);
         m_lastDatabasesActions->addAction(action);
     }
@@ -853,6 +901,7 @@ void MainWindow::updateMenuActionState()
     // Database State
     bool databaseUnlocked = (dbWidget && !dbWidget->isLocked());
     bool inDatabase = (dbMode == DatabaseWidget::Mode::ViewMode);
+    bool writable = databaseUnlocked && !dbWidget->database()->isReadOnly();
     bool inDatabaseSettings = (dbMode == DatabaseWidget::Mode::DatabaseSettingsMode);
     bool inReports = (dbMode == DatabaseWidget::Mode::ReportsMode);
     bool editingEntry = (dbMode == DatabaseWidget::Mode::EditEntryMode);
@@ -889,11 +938,11 @@ void MainWindow::updateMenuActionState()
     bool entryViewAtBottom =
         (groupSelected && dbWidget->currentEntryIndex() == dbWidget->currentGroup()->entries().size() - 1);
 
-    m_ui->actionEntryNew->setEnabled(inDatabase && !inRecycleBin);
-    m_ui->actionEntryClone->setEnabled(singleEntrySelected && !inRecycleBin);
-    m_ui->actionEntryEdit->setEnabled(singleEntrySelected);
-    m_ui->actionEntryExpire->setEnabled(multiEntrySelected);
-    m_ui->actionEntryDelete->setEnabled(multiEntrySelected);
+    m_ui->actionEntryNew->setEnabled(writable && inDatabase && !inRecycleBin);
+    m_ui->actionEntryClone->setEnabled(writable && singleEntrySelected && !inRecycleBin);
+    m_ui->actionEntryEdit->setEnabled(writable && singleEntrySelected);
+    m_ui->actionEntryExpire->setEnabled(writable && multiEntrySelected);
+    m_ui->actionEntryDelete->setEnabled(writable && multiEntrySelected);
     if (dbWidget) {
         if (dbWidget->database()->metadata()->recycleBinEnabled() && !inRecycleBin) {
             m_ui->actionEntryDelete->setToolTip(
@@ -907,15 +956,15 @@ void MainWindow::updateMenuActionState()
     }
     bool hasRecycledEntries = (inDatabase && dbWidget && dbWidget->hasRecycledSelectedEntries());
     m_ui->actionEntryRestore->setVisible(multiEntrySelected && hasRecycledEntries);
-    m_ui->actionEntryRestore->setEnabled(multiEntrySelected && hasRecycledEntries);
+    m_ui->actionEntryRestore->setEnabled(writable && multiEntrySelected && hasRecycledEntries);
     if (dbWidget) {
         m_ui->actionEntryRestore->setText(tr("Restore Entry(s)", "", dbWidget->numberOfSelectedEntries()));
         m_ui->actionEntryRestore->setToolTip(tr("Restore Entry(s)", "", dbWidget->numberOfSelectedEntries()));
     }
     m_ui->actionEntryMoveUp->setVisible(inDatabase && !entryViewSorted);
     m_ui->actionEntryMoveDown->setVisible(inDatabase && !entryViewSorted);
-    m_ui->actionEntryMoveUp->setEnabled(singleEntrySelected && !entryViewSorted && !entryViewAtTop);
-    m_ui->actionEntryMoveDown->setEnabled(singleEntrySelected && !entryViewSorted && !entryViewAtBottom);
+    m_ui->actionEntryMoveUp->setEnabled(writable && singleEntrySelected && !entryViewSorted && !entryViewAtTop);
+    m_ui->actionEntryMoveDown->setEnabled(writable && singleEntrySelected && !entryViewSorted && !entryViewAtBottom);
     m_ui->actionEntryCopyTitle->setEnabled(singleEntryOrEditing && dbWidget->currentEntryHasTitle());
     m_ui->actionEntryCopyUsername->setEnabled(singleEntryOrEditing && dbWidget->currentEntryHasUsername());
     // NOTE: Copy password is enabled even if the selected entry's password is blank to prevent Ctrl+C
@@ -925,7 +974,7 @@ void MainWindow::updateMenuActionState()
     m_ui->actionEntryCopyNotes->setEnabled(singleEntryOrEditing && dbWidget->currentEntryHasNotes());
     m_ui->menuEntryCopyAttribute->setEnabled(singleEntryOrEditing);
     m_ui->menuEntryTotp->setEnabled(singleEntrySelected);
-    m_ui->menuTags->setEnabled(multiEntrySelected);
+    m_ui->menuTags->setEnabled(writable && multiEntrySelected);
     // Handle tear-off tags menu
     if (m_ui->menuTags->isTearOffMenuVisible()) {
         if (!databaseUnlocked) {
@@ -952,15 +1001,16 @@ void MainWindow::updateMenuActionState()
     m_ui->actionEntryTotp->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
     m_ui->actionEntryCopyTotp->setEnabled(singleEntrySelected);
     m_ui->actionEntryCopyPasswordTotp->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
-    m_ui->actionEntrySetupTotp->setEnabled(singleEntrySelected);
+    m_ui->actionEntrySetupTotp->setEnabled(writable && singleEntrySelected);
     m_ui->actionEntryTotpQRCode->setEnabled(singleEntrySelected && dbWidget->currentEntryHasTotp());
-    m_ui->actionEntryDownloadIcon->setEnabled((multiEntrySelected && !singleEntrySelected)
-                                              || (singleEntrySelected && dbWidget->currentEntryHasUrl()));
+    m_ui->actionEntryDownloadIcon->setEnabled(
+        writable
+        && ((multiEntrySelected && !singleEntrySelected) || (singleEntrySelected && dbWidget->currentEntryHasUrl())));
 #ifdef KPXC_FEATURE_BROWSER
     m_ui->actionEntryImportPasskey->setVisible(singleEntrySelected);
-    m_ui->actionEntryImportPasskey->setEnabled(singleEntrySelected);
+    m_ui->actionEntryImportPasskey->setEnabled(writable && singleEntrySelected);
     m_ui->actionEntryRemovePasskey->setVisible(singleEntrySelected && dbWidget->currentEntryHasPasskey());
-    m_ui->actionEntryRemovePasskey->setEnabled(singleEntrySelected && dbWidget->currentEntryHasPasskey());
+    m_ui->actionEntryRemovePasskey->setEnabled(writable && singleEntrySelected && dbWidget->currentEntryHasPasskey());
 #endif
 #ifdef KPXC_FEATURE_SSHAGENT
     bool hasSSHKey = singleEntrySelected && sshAgent()->isEnabled() && dbWidget->currentEntryHasSshKey();
@@ -972,20 +1022,20 @@ void MainWindow::updateMenuActionState()
     m_ui->actionClearSSHAgent->setEnabled(sshAgent()->isEnabled());
 #endif
 
-    m_ui->actionGroupNew->setEnabled(groupSelected && !inRecycleBin);
-    m_ui->actionGroupEdit->setEnabled(groupSelected);
-    m_ui->actionGroupClone->setEnabled(groupSelected && dbWidget->canCloneCurrentGroup());
-    m_ui->actionGroupDelete->setEnabled(groupSelected && dbWidget->canDeleteCurrentGroup());
+    m_ui->actionGroupNew->setEnabled(writable && groupSelected && !inRecycleBin);
+    m_ui->actionGroupEdit->setEnabled(writable && groupSelected);
+    m_ui->actionGroupClone->setEnabled(writable && groupSelected && dbWidget->canCloneCurrentGroup());
+    m_ui->actionGroupDelete->setEnabled(writable && groupSelected && dbWidget->canDeleteCurrentGroup());
     m_ui->actionGroupSortAsc->setVisible(groupHasChildren);
-    m_ui->actionGroupSortAsc->setEnabled(groupHasChildren);
+    m_ui->actionGroupSortAsc->setEnabled(writable && groupHasChildren);
     m_ui->actionGroupSortDesc->setVisible(groupHasChildren);
-    m_ui->actionGroupSortDesc->setEnabled(groupHasChildren);
+    m_ui->actionGroupSortDesc->setEnabled(writable && groupHasChildren);
     m_ui->actionGroupEmptyRecycleBin->setVisible(inRecycleBin);
-    m_ui->actionGroupEmptyRecycleBin->setEnabled(inRecycleBin);
+    m_ui->actionGroupEmptyRecycleBin->setEnabled(writable && inRecycleBin);
 #ifdef KPXC_FEATURE_NETWORK
     m_ui->actionGroupDownloadFavicons->setVisible(!inRecycleBin);
 #endif
-    m_ui->actionGroupDownloadFavicons->setEnabled(groupSelected && groupHasEntries && !inRecycleBin);
+    m_ui->actionGroupDownloadFavicons->setEnabled(writable && groupSelected && groupHasEntries && !inRecycleBin);
 
     // Database Menu
     m_ui->actionDatabaseSave->setEnabled(databaseUnlocked && m_ui->tabWidget->canSave());
@@ -995,15 +1045,15 @@ void MainWindow::updateMenuActionState()
     m_ui->actionLockDatabase->setEnabled(databaseUnlocked);
     m_ui->actionLockAllDatabases->setEnabled(hasLockableDatabase);
     m_ui->actionLockDatabaseToolbar->setEnabled(hasLockableDatabase);
-    m_ui->actionDatabaseSettings->setEnabled(inDatabase || inDatabaseSettings);
-    m_ui->actionDatabaseSecurity->setEnabled(inDatabase || inDatabaseSettings);
-    m_ui->actionReports->setEnabled(inDatabase || inReports);
+    m_ui->actionDatabaseSettings->setEnabled(writable && (inDatabase || inDatabaseSettings));
+    m_ui->actionDatabaseSecurity->setEnabled(writable && (inDatabase || inDatabaseSettings));
+    m_ui->actionReports->setEnabled(writable && (inDatabase || inReports));
     m_ui->menuRemoteSync->setEnabled(inDatabase || inDatabaseSettings);
     m_ui->menuExport->setEnabled(inDatabase);
-    m_ui->actionDatabaseMerge->setEnabled(inDatabase);
+    m_ui->actionDatabaseMerge->setEnabled(writable && inDatabase);
 #ifdef KPXC_FEATURE_BROWSER
-    m_ui->actionPasskeys->setEnabled(inDatabase || inReports);
-    m_ui->actionImportPasskey->setEnabled(inDatabase);
+    m_ui->actionPasskeys->setEnabled(writable && (inDatabase || inReports));
+    m_ui->actionImportPasskey->setEnabled(writable && inDatabase);
 #endif
 
     m_searchWidgetAction->setEnabled(inDatabase);
@@ -1028,6 +1078,26 @@ void MainWindow::updateToolbarSeparatorVisibility()
         m_ui->toolbarSeparator->setVisible(false);
     }
 }
+
+#ifdef KPXC_FEATURE_NETWORK
+void MainWindow::updateWebDavStatusBar()
+{
+    auto* widget = m_ui->tabWidget->currentDatabaseWidget();
+    auto* session = m_ui->stackedWidget->currentIndex() == DatabaseTabScreen && widget && !widget->isLocked()
+                        ? widget->webDavSession()
+                        : nullptr;
+    if (m_statusBarSession != session) {
+        statusBar()->clearMessage();
+        m_statusBarSession = session;
+    }
+    const bool pending = session && session->status() == WebDavSession::Status::Pending;
+    if (pending) {
+        statusBar()->clearMessage();
+        m_webDavStatusLabel->setText(session->statusText());
+    }
+    m_webDavStatusLabel->setVisible(pending);
+}
+#endif
 
 void MainWindow::updateWindowTitle()
 {
@@ -1219,6 +1289,19 @@ void MainWindow::updateRemoteSyncMenuEntries()
 
     auto dbWidget = m_ui->tabWidget->currentDatabaseWidget();
     if (dbWidget) {
+#ifdef KPXC_FEATURE_NETWORK
+        if (auto* session = dbWidget->webDavSession()) {
+            m_ui->menuRemoteSync->addAction(tr("Retry WebDAV Sync"), session, &WebDavSession::retry);
+            m_ui->menuRemoteSync->addAction(
+                tr("Update WebDAV Login…"), m_ui->tabWidget, &DatabaseTabWidget::updateWebDavCredentials);
+            m_ui->menuRemoteSync->addAction(
+                tr("Forget WebDAV Login…"), m_ui->tabWidget, &DatabaseTabWidget::forgetWebDavCredentials);
+            if (session->isReadOnly()) {
+                return;
+            }
+            m_ui->menuRemoteSync->addSeparator();
+        }
+#endif
         // Setup sync shortcut
         auto action = m_ui->menuRemoteSync->addAction(tr("Setup Remote Sync…"));
         connect(action, &QAction::triggered, dbWidget, &DatabaseWidget::switchToRemoteSettings);
@@ -1510,7 +1593,7 @@ bool MainWindow::saveLastDatabases()
     if (config()->get(Config::OpenPreviousDatabasesOnStartup).toBool()) {
         auto currentDbWidget = m_ui->tabWidget->currentDatabaseWidget();
         if (currentDbWidget && !currentDbWidget->database()->isTemporaryDatabase()) {
-            config()->set(Config::LastActiveDatabase, currentDbWidget->database()->filePath());
+            config()->set(Config::LastActiveDatabase, currentDbWidget->databaseReference());
         } else {
             config()->remove(Config::LastActiveDatabase);
         }
@@ -1519,7 +1602,7 @@ bool MainWindow::saveLastDatabases()
         for (int i = 0; i < m_ui->tabWidget->count(); ++i) {
             auto dbWidget = m_ui->tabWidget->databaseWidgetFromIndex(i);
             if (!dbWidget->database()->isTemporaryDatabase()) {
-                openDatabases.append(QDir::toNativeSeparators(dbWidget->database()->filePath()));
+                openDatabases.append(QDir::toNativeSeparators(dbWidget->databaseReference()));
             }
         }
 

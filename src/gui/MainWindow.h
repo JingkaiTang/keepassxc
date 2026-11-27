@@ -171,6 +171,11 @@ private:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
 
+#ifdef KPXC_FEATURE_NETWORK
+    void updateWebDavStatusBar();
+    QPointer<WebDavSession> m_statusBarSession;
+    QLabel* m_webDavStatusLabel = nullptr;
+#endif
     void initViewMenu();
     void initActionCollection();
 

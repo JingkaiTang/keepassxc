@@ -1682,6 +1682,10 @@ Backup database located at %2</source>
         <source>No file path was provided.</source>
         <translation>未提供文件路径。</translation>
     </message>
+    <message>
+        <source>This database is read-only. Save a copy to a different file.</source>
+        <translation>此数据库为只读。请将副本保存为其他文件。</translation>
+    </message>
 </context>
 <context>
     <name>DatabaseOpenDialog</name>
@@ -2763,9 +2767,41 @@ This is definitely a bug, please report it to the developers.</source>
         <comment>Database tab name modifier</comment>
         <translation>%1 [临时]</translation>
     </message>
+    <message>
+        <source>Login is valid for this session. The system credential store could not remember it on this device.</source>
+        <translation>本次登录有效。系统凭据库无法在此设备上保存登录信息。</translation>
+    </message>
+    <message>
+        <source>The system credential store is unavailable. Any previously saved login could not be removed.</source>
+        <translation>系统凭据库不可用。若曾保存登录信息，此次未能移除。</translation>
+    </message>
+    <message>
+        <source>The system credential store could not remove the WebDAV login.</source>
+        <translation>系统凭据库无法移除 WebDAV 登录信息。</translation>
+    </message>
+    <message>
+        <source>Saved WebDAV login removed from this device.</source>
+        <translation>已从此设备移除保存的 WebDAV 登录信息。</translation>
+    </message>
+    <message>
+        <source>Opening WebDAV database…</source>
+        <translation>正在打开 WebDAV 数据库…</translation>
+    </message>
 </context>
 <context>
     <name>DatabaseWidget</name>
+    <message>
+        <source>Verify conditional writes…</source>
+        <translation>验证条件写入…</translation>
+    </message>
+    <message>
+        <source>Verify conditional writes</source>
+        <translation>验证条件写入</translation>
+    </message>
+    <message>
+        <source>Create, update and delete a temporary file in this WebDAV folder to check that the server rejects outdated writes?</source>
+        <translation>将在此 WebDAV 文件夹中创建、更新并删除一个临时文件，以验证服务器会拒绝过期版本的写入。是否继续？</translation>
+    </message>
     <message>
         <source>Searches and Tags</source>
         <translation>搜索与标签</translation>
@@ -3024,6 +3060,18 @@ Disable safe saves and try again?</source>
     <message>
         <source>Merge canceled, no changes were made.</source>
         <translation>合并已取消，未进行任何更改。</translation>
+    </message>
+    <message>
+        <source>Merge WebDAV Changes…</source>
+        <translation>合并 WebDAV 修改…</translation>
+    </message>
+    <message>
+        <source>Unlock the remote version to review its changes. The merged file will use the master key of your open database.</source>
+        <translation>解锁远端版本以查看其修改。合并后的文件将使用当前数据库的主密钥。</translation>
+    </message>
+    <message>
+        <source>Choose a location outside the WebDAV working copy.</source>
+        <translation>请选择与 WebDAV 工作副本不同的保存位置。</translation>
     </message>
 </context>
 <context>
@@ -6539,6 +6587,22 @@ This version is not meant for production use.</source>
     <message numerus="yes">
         <source>Permanently delete the selected entry(s)</source>
         <translation><numerusform>永久删除所选条目</numerusform></translation>
+    </message>
+    <message>
+        <source>Open from WebDAV…</source>
+        <translation>从 WebDAV 打开…</translation>
+    </message>
+    <message>
+        <source>Retry WebDAV Sync</source>
+        <translation>重试 WebDAV 同步</translation>
+    </message>
+    <message>
+        <source>Update WebDAV Login…</source>
+        <translation>更新 WebDAV 登录信息…</translation>
+    </message>
+    <message>
+        <source>Forget WebDAV Login…</source>
+        <translation>忘记 WebDAV 登录信息…</translation>
     </message>
 </context>
 <context>
@@ -10623,6 +10687,294 @@ Example: JBSWY3DPEHPK3PXP</source>
     </message>
 </context>
 <context>
+    <name>WebDavCredentials</name>
+    <message>
+        <source>KeePassXC WebDAV login</source>
+        <translation>KeePassXC WebDAV 登录信息</translation>
+    </message>
+</context>
+<context>
+    <name>WebDavDialog</name>
+    <message>
+        <source>Remember login on this device</source>
+        <translation>在此设备上记住登录信息</translation>
+    </message>
+    <message>
+        <source>Open from WebDAV</source>
+        <translation>从 WebDAV 打开</translation>
+    </message>
+    <message>
+        <source>Update WebDAV Login</source>
+        <translation>更新 WebDAV 登录信息</translation>
+    </message>
+    <message>
+        <source>HTTPS database file URL:</source>
+        <translation>数据库文件的 HTTPS 地址：</translation>
+    </message>
+    <message>
+        <source>WebDAV username:</source>
+        <translation>WebDAV 用户名：</translation>
+    </message>
+    <message>
+        <source>WebDAV password:</source>
+        <translation>WebDAV 密码：</translation>
+    </message>
+    <message>
+        <source>Enter an HTTPS file URL without embedded credentials, a query, or a fragment.</source>
+        <translation>请输入 HTTPS 文件地址，地址中不能包含登录信息、查询参数或片段标识。</translation>
+    </message>
+    <message>
+        <source>Enter the WebDAV username originally used for this connection.</source>
+        <translation>请输入最初为此连接设置的 WebDAV 用户名。</translation>
+    </message>
+</context>
+<context>
+    <name>WebDavSync</name>
+    <message>
+        <source>Review WebDAV conflicts</source>
+        <translation>确认 WebDAV 同步冲突</translation>
+    </message>
+    <message>
+        <source>Entry</source>
+        <translation>条目</translation>
+    </message>
+    <message>
+        <source>This device</source>
+        <translation>本机</translation>
+    </message>
+    <message>
+        <source>WebDAV</source>
+        <translation>WebDAV</translation>
+    </message>
+    <message>
+        <source>Keep</source>
+        <translation>保留的版本</translation>
+    </message>
+    <message>
+        <source>Show passwords</source>
+        <translation>显示密码</translation>
+    </message>
+    <message>
+        <source>Merge and sync</source>
+        <translation>合并并同步</translation>
+    </message>
+    <message>
+        <source>Choose…</source>
+        <translation>请选择…</translation>
+    </message>
+    <message>
+        <source>Database settings and groups</source>
+        <translation>数据库设置和分组</translation>
+    </message>
+    <message>
+        <source>Not present</source>
+        <translation>无此条目</translation>
+    </message>
+    <message>
+        <source>Unlock the updated database to use it with its new master key.</source>
+        <translation>请用新的主密钥解锁远端数据库，以在本机使用更新后的版本。</translation>
+    </message>
+    <message>
+        <source>Unlock the remote database to review its changes. A merged database will use the master key of this device.</source>
+        <translation>请解锁远端数据库以查看更改。合并后的数据库将使用本机版本的主密钥。</translation>
+    </message>
+    <message>
+        <source>Unlock the updated WebDAV database to review it. Your local copy is preserved.</source>
+        <translation>远端数据库需要重新解锁才能查看更改。本地副本已保留。</translation>
+    </message>
+    <message>
+        <source>Local changes are preserved. This WebDAV connection cannot safely upload them.</source>
+        <translation>本地修改已保留。当前 WebDAV 连接无法安全上传。</translation>
+    </message>
+    <message>
+        <source>The remote file has a different database root. Your local copy is preserved.</source>
+        <translation>远端文件的数据库根分组不同。本地副本已保留。</translation>
+    </message>
+    <message>
+        <source>Conflicting changes need your review. The entire upload is on hold.</source>
+        <translation>两端的修改有冲突。请确认要保留的版本，确认后将一起上传本批更改。</translation>
+    </message>
+    <message>
+        <source>The common baseline is unavailable. Review both versions before syncing.</source>
+        <translation>找不到上次同步的共同版本。请先比较并确认两端的内容。</translation>
+    </message>
+    <message>
+        <source>Could not create an encrypted merge candidate.</source>
+        <translation>无法创建用于合并的加密副本。</translation>
+    </message>
+    <message>
+        <source>The selected changes need manual review because their destination group changed.</source>
+        <translation>所选条目的目标分组已更改，请重新确认。</translation>
+    </message>
+    <message>
+        <source>Could not save the encrypted merge candidate: %1</source>
+        <translation>无法保存合并后的加密副本。%1</translation>
+    </message>
+</context>
+<context>
+    <name>WebDavSession</name>
+    <message>
+        <source>Could not recover the interrupted WebDAV update. The encrypted files are preserved.</source>
+        <translation>无法恢复中断的 WebDAV 更新。加密文件已保留。</translation>
+    </message>
+    <message>
+        <source>Could not preserve the encrypted WebDAV synchronization baseline.</source>
+        <translation>无法保存用作同步基线的加密数据库副本。</translation>
+    </message>
+    <message>
+        <source>Could not install the updated WebDAV database.</source>
+        <translation>无法更新 WebDAV 数据库的本地副本。</translation>
+    </message>
+    <message>
+        <source>Write verification could not clean up the temporary file: %1</source>
+        <translation>写入验证未能清理临时文件 %1。</translation>
+    </message>
+    <message>
+        <source>Read-only: the server did not pass conditional write verification.</source>
+        <translation>只读：服务器未通过条件写入验证。</translation>
+    </message>
+    <message>
+        <source>Verifying conditional writes with a temporary file…</source>
+        <translation>正在使用临时文件验证条件写入…</translation>
+    </message>
+    <message>
+        <source>Could not confirm release of the WebDAV lock. The local copy is preserved.</source>
+        <translation>尚未确认 WebDAV 锁已释放。本地副本已保留。</translation>
+    </message>
+    <message>
+        <source>Checking the remote database under an exclusive lock…</source>
+        <translation>已请求独占锁，正在核对远端数据库…</translation>
+    </message>
+    <message>
+        <source>Read-only: the server could not protect this write. Local changes are preserved.</source>
+        <translation>只读：服务器无法保护此次写入。本地修改已保留。</translation>
+    </message>
+    <message>
+        <source>Read-only until conditional writes are verified for this folder and account.</source>
+        <translation>只读：请先验证此账号在当前文件夹中的条件写入。</translation>
+    </message>
+    <message>
+        <source>Read-only: the server did not provide a usable ETag.</source>
+        <translation>只读：服务器未提供可用的 ETag。</translation>
+    </message>
+    <message>
+        <source>Enter a full HTTPS database URL without credentials, a query or a fragment.</source>
+        <translation>请输入完整的 HTTPS 数据库地址，地址中不能包含登录信息、查询参数或片段标识。</translation>
+    </message>
+    <message>
+        <source>Could not prepare a private folder for this WebDAV database.</source>
+        <translation>无法为此 WebDAV 数据库创建专用文件夹。</translation>
+    </message>
+    <message>
+        <source>This WebDAV database is already in use, or its working folder cannot be locked.</source>
+        <translation>此 WebDAV 数据库已被打开，或其工作文件夹无法锁定。</translation>
+    </message>
+    <message>
+        <source>The saved WebDAV connection is invalid.</source>
+        <translation>已保存的 WebDAV 连接无效。</translation>
+    </message>
+    <message>
+        <source>Could not save the WebDAV synchronization state.</source>
+        <translation>无法保存 WebDAV 同步状态。</translation>
+    </message>
+    <message>
+        <source>The encrypted WebDAV working copy could not be read.</source>
+        <translation>无法读取本机加密的 WebDAV 数据库副本。</translation>
+    </message>
+    <message>
+        <source>Saved locally, waiting to sync</source>
+        <translation>已保存到本机，待同步</translation>
+    </message>
+    <message>
+        <source>Could not create a private WebDAV transfer file.</source>
+        <translation>无法为 WebDAV 传输创建专用文件。</translation>
+    </message>
+    <message>
+        <source>Could not read the saved database for upload.</source>
+        <translation>无法读取待上传的数据库。</translation>
+    </message>
+    <message>
+        <source>The saved database or its remote version could not be verified.</source>
+        <translation>无法验证已保存的数据库或其远端版本。</translation>
+    </message>
+    <message>
+        <source>Syncing…</source>
+        <translation>正在同步…</translation>
+    </message>
+    <message>
+        <source>Checking WebDAV database…</source>
+        <translation>正在检查 WebDAV 数据库…</translation>
+    </message>
+    <message>
+        <source>The WebDAV download could not be written to disk.</source>
+        <translation>无法将从 WebDAV 下载的数据写入磁盘。</translation>
+    </message>
+    <message>
+        <source>WebDAV login required</source>
+        <translation>需要登录 WebDAV</translation>
+    </message>
+    <message>
+        <source>WebDAV unavailable. Offline</source>
+        <translation>无法连接 WebDAV，当前处于离线状态</translation>
+    </message>
+    <message>
+        <source>WebDAV request failed (HTTP %1).</source>
+        <translation>WebDAV 请求失败（HTTP %1）。</translation>
+    </message>
+    <message>
+        <source>The WebDAV response does not contain a readable KDBX database.</source>
+        <translation>WebDAV 服务器未返回可读取的 KDBX 数据库。</translation>
+    </message>
+    <message>
+        <source>Could not save the downloaded database.</source>
+        <translation>无法保存下载的数据库。</translation>
+    </message>
+    <message>
+        <source>Remote changes are ready to merge</source>
+        <translation>远端修改已就绪，可以合并</translation>
+    </message>
+    <message>
+        <source>The saved WebDAV working copy could not be read.</source>
+        <translation>无法读取已保存的 WebDAV 数据库工作副本。</translation>
+    </message>
+    <message>
+        <source>Read-only: the server does not provide a strong ETag</source>
+        <translation>只读：服务器未提供强 ETag</translation>
+    </message>
+    <message>
+        <source>Remote changes need to be merged</source>
+        <translation>需要合并远端修改</translation>
+    </message>
+    <message>
+        <source>Synced to WebDAV</source>
+        <translation>已同步到 WebDAV</translation>
+    </message>
+    <message>
+        <source>Loaded changes from WebDAV</source>
+        <translation>已从 WebDAV 载入更改</translation>
+    </message>
+    <message>
+        <source>Synced</source>
+        <translation>已同步</translation>
+    </message>
+    <message>
+        <source>Read-only: the server rejected its current ETag. Changes are saved locally.</source>
+        <translation>只读：服务器拒绝了当前 ETag。修改已保存在本机。</translation>
+    </message>
+    <message>
+        <source>Unavailable WebDAV database (%1)</source>
+        <translation>不可用的 WebDAV 数据库（%1）</translation>
+    </message>
+    <message>
+        <source>%1 (connection %2)</source>
+        <translation>%1（连接 %2）</translation>
+    </message>
+    <message>
+        <source>Could not establish a trusted HTTPS connection to the WebDAV server.</source>
+        <translation>无法与 WebDAV 服务器建立可信的 HTTPS 连接。</translation>
+    </message>
+</context>
+<context>
     <name>WelcomeWidget</name>
     <message>
         <source>Start storing your passwords securely in a KeePassXC database</source>
@@ -10651,6 +11003,10 @@ Example: JBSWY3DPEHPK3PXP</source>
     <message>
         <source>Import File</source>
         <translation>导入文件</translation>
+    </message>
+    <message>
+        <source>Open from WebDAV…</source>
+        <translation>从 WebDAV 打开…</translation>
     </message>
 </context>
 <context>

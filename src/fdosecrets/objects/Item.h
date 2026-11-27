@@ -103,7 +103,7 @@ namespace FdoSecrets
          * Check if the backend is a valid object, send error reply if not.
          * @return No error if the backend is valid.
          */
-        DBusResult ensureBackend() const;
+        DBusResult ensureBackend(bool writing = false) const;
 
         /**
          * Ensure the database is unlocked, send error reply if locked.

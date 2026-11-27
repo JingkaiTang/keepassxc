@@ -420,6 +420,22 @@ image::database_maintenance.png[]
 == Remote database support
 KeePassXC provides support for syncing database files that reside in a remote location. If you can download/upload the database file via a commandline tool (e.g. rsync, ssh, scp etc.) KeePassXC offers easy to use functionality to sync the remote database.
 
+=== Open a WebDAV database
+
+Choose _Open from WebDAV…_ on the welcome screen or in the _Database_ menu. Paste the full HTTPS URL of the database file, then enter your WebDAV username and password. Use a direct file URL without embedded credentials, a query string, or a fragment. Unlock the downloaded database using its usual master key.
+
+_Remember login on this device_ saves the WebDAV login in the current user's system credential store. A recent database can then be reopened without entering the WebDAV login again. On Linux, this requires an available desktop Secret Service independent of the open database. Use _Database > Remote Sync…_ to update or forget a WebDAV login.
+
+Manual and automatic saves first commit an encrypted working copy on this device. The status bar briefly shows _Synced to WebDAV_ when the server confirms a save and _Loaded changes from WebDAV_ when a remote update is applied. A pending offline save stays in the status bar. Hover over the database tab to see its current sync status. While offline, keep working with the encrypted copy; pending saves survive restarting KeePassXC. _Save Database As…_ switches the tab to a local file, and _Save Database Backup…_ writes a separate copy.
+
+If changes need your review, use the banner above the entries. Choose _Merge WebDAV Changes…_ to review the changes before uploading, or save a local copy. KeePassXC sends the server's version tag (ETag) back with each database update.
+
+* A quoted ETag supports standard conditional writes.
+* For an unquoted ETag, select _Verify conditional writes…_. With your confirmation, KeePassXC creates and removes a temporary file in the same folder. It checks that the server accepts the current version and rejects an outdated one. A successful check enables writes for this account and folder.
+* For a weak ETag, KeePassXC requests an exclusive WebDAV lock and compares the remote database bytes with the last synchronized copy before uploading. If the server cannot supply the lock or rejects its own unchanged tag, KeePassXC preserves your local edits and switches to read-only. You can keep the edited database using _Save Database As…_.
+
+A database with a missing or malformed ETag opens read-only.
+
 === Sync with remote database
 Open the remote sync settings via _Database > Database Settings… > Remote_ to create commands to sync a local database or a temporary local copy of a remote database.
 

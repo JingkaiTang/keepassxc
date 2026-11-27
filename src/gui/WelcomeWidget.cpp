@@ -23,6 +23,9 @@
 #include "config-keepassx.h"
 #include "core/Config.h"
 #include "gui/Icons.h"
+#ifdef KPXC_FEATURE_NETWORK
+#include "networking/WebDavSession.h"
+#endif
 
 WelcomeWidget::WelcomeWidget(QWidget* parent)
     : QWidget(parent)
@@ -44,6 +47,12 @@ WelcomeWidget::WelcomeWidget(QWidget* parent)
     m_ui->buttonImport->setIcon(icons()->icon("document-import"));
     m_ui->buttonImport->setStyleSheet("text-align:center;");
 
+#ifdef KPXC_FEATURE_NETWORK
+    m_ui->buttonOpenWebDav->setIcon(icons()->icon("remote-sync"));
+    connect(m_ui->buttonOpenWebDav, &QPushButton::clicked, this, &WelcomeWidget::openWebDav);
+#else
+    m_ui->buttonOpenWebDav->hide();
+#endif
     refreshLastDatabases();
 
     connect(m_ui->buttonNewDatabase, SIGNAL(clicked()), SIGNAL(newDatabase()));
@@ -62,7 +71,7 @@ void WelcomeWidget::openDatabaseFromFile(QListWidgetItem* item)
     if (!item || item->text().isEmpty()) {
         return;
     }
-    emit openDatabaseFile(item->text());
+    emit openDatabaseFile(item->data(Qt::UserRole).toString());
 }
 
 void WelcomeWidget::removeFromLastDatabases(QListWidgetItem* item)
@@ -73,7 +82,7 @@ void WelcomeWidget::removeFromLastDatabases(QListWidgetItem* item)
 
     if (config()->get(Config::RememberLastDatabases).toBool()) {
         QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
-        lastDatabases.removeOne(item->text());
+        lastDatabases.removeOne(item->data(Qt::UserRole).toString());
         config()->set(Config::LastDatabases, lastDatabases);
     }
     refreshLastDatabases();
@@ -83,9 +92,14 @@ void WelcomeWidget::refreshLastDatabases()
 {
     m_ui->recentListWidget->clear();
     const QStringList lastDatabases = config()->get(Config::LastDatabases).toStringList();
+    QHash<QString, QString> labels;
+#ifdef KPXC_FEATURE_NETWORK
+    labels = WebDavSession::recentDisplayNames(lastDatabases);
+#endif
     for (const QString& database : lastDatabases) {
         auto itm = new QListWidgetItem;
-        itm->setText(database);
+        itm->setData(Qt::UserRole, database);
+        itm->setText(labels.value(database, database));
         m_ui->recentListWidget->addItem(itm);
     }
 

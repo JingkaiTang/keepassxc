@@ -37,6 +37,9 @@
 #include "gui/MessageBox.h"
 #include "gui/PasswordWidget.h"
 #include "gui/wizard/NewDatabaseWizard.h"
+#ifdef KPXC_FEATURE_NETWORK
+#include "networking/WebDavCredentials.h"
+#endif
 #include "util/FdoSecretsProxy.h"
 #include "util/TemporaryFile.h"
 
@@ -288,6 +291,24 @@ void TestGuiFdoSecrets::testServiceEnable()
         coll->modified(),
         static_cast<qulonglong>(m_db->rootGroup()->timeInfo().lastModificationTime().toMSecsSinceEpoch() / 1000));
 }
+
+#ifdef KPXC_FEATURE_NETWORK
+void TestGuiFdoSecrets::testWebDavLoginUsesIndependentKeyring()
+{
+    // This suite runs on an isolated session bus. Its unlocked KeePassXC database owns Secret Service.
+    auto service = enableService();
+    VERIFY(service);
+    const QString reference = QStringLiteral("test-webdav-login");
+    QString user = "alice";
+    QString password = "test-password";
+    using WebDavCredentials::Result;
+    COMPARE(WebDavCredentials::write(reference, user, password), Result::Unavailable);
+    COMPARE(WebDavCredentials::read(reference, user, password), Result::Unavailable);
+    VERIFY(user.isEmpty());
+    VERIFY(password.isEmpty());
+    COMPARE(WebDavCredentials::remove(reference), Result::Unavailable);
+}
+#endif
 
 void TestGuiFdoSecrets::testServiceEnableNoExposedDatabase()
 {

@@ -51,6 +51,7 @@ ShareObserver::ShareObserver(QSharedPointer<Database> db, QObject* parent)
     connect(m_db.data(), &Database::groupRemoved, this, &ShareObserver::handleDatabaseChanged);
 
     connect(m_db.data(), &Database::modified, this, &ShareObserver::handleDatabaseChanged);
+    connect(m_db.data(), &Database::readOnlyChanged, this, &ShareObserver::handleDatabaseChanged);
     connect(m_db.data(), &Database::databaseSaved, this, &ShareObserver::handleDatabaseSaved);
 
     handleDatabaseChanged();
@@ -195,7 +196,7 @@ void ShareObserver::handleDatabaseChanged()
         return;
     }
     const auto active = KeeShare::active();
-    if (!m_enabled || (!active.out && !active.in)) {
+    if (m_db->isReadOnly() || !m_enabled || (!active.out && !active.in)) {
         deinitialize();
     } else {
         reinitialize();

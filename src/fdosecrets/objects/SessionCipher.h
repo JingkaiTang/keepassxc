@@ -74,6 +74,7 @@ namespace FdoSecrets
     public:
         static constexpr const char Algorithm[] = "dh-ietf1024-sha256-aes128-cbc-pkcs7";
 
+        DhIetf1024Sha256Aes128CbcPkcs7();
         explicit DhIetf1024Sha256Aes128CbcPkcs7(const QByteArray& clientPublicKey);
 
         Secret encrypt(const Secret& input) override;
@@ -81,6 +82,7 @@ namespace FdoSecrets
         bool isValid() const override;
         QVariant negotiationOutput() const override;
 
+        QByteArray publicKey() const;
         bool updateClientPublicKey(const QByteArray& clientPublicKey);
 
     private:

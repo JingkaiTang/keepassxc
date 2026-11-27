@@ -75,6 +75,8 @@ public:
     using ChangeList = QList<Change>;
 
     ChangeList merge(bool dryRun = false);
+    // Apply a version already selected by three-way comparison, including its history and location.
+    bool applyEntryVersion(const QUuid& uuid, const Entry* selected);
 
 private:
     struct MergeContext
