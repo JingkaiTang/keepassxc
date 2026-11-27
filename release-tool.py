@@ -687,6 +687,8 @@ class Build(Command):
             parser.add_argument('-d', '--docker-image',
                                 help='Build for Linux in the given Docker image (overrides --use-system-deps).')
             parser.add_argument('-a', '--appimage', help='Build a Linux AppImage.', action='store_true')
+            parser.add_argument('--no-appimage-update', help='Omit AppImage update information and the zsync file.',
+                                action='store_true')
 
         if sys.platform == 'darwin':
             parser.add_argument('--macos-target', default=12, metavar='MACOSX_DEPLOYMENT_TARGET',
@@ -699,6 +701,7 @@ class Build(Command):
                                 help='Read Apple credentials for notarization from a keychain (default: %(default)s).')
         elif sys.platform == 'win32':
             parser.add_argument('--mingw', help='Build using MinGW-w64 toolchain.', action='store_true')
+            parser.add_argument('--zip-only', help='Package only the portable Windows ZIP.', action='store_true')
             parser.add_argument('--sign', help='Sign binaries prior to packaging.', action='store_true')
             parser.add_argument('--sign-identity', help='SHA1 fingerprint of the signing certificate.')
             parser.add_argument('--sign-timestamp-url', help='Timestamp URL for signing binaries.',
@@ -796,7 +799,7 @@ class Build(Command):
     # noinspection PyMethodMayBeStatic
     def build_windows(self, version, src_dir, output_dir, *, parallelism, cmake_opts, platform_target,
                       sign, sign_identity, sign_timestamp_url, with_tests, mingw, use_system_deps,
-                      build_qt, **_):
+                      build_qt, zip_only, **_):
         platform_target = _map_platform_target(platform_target, 'amd64', 'arm64')
 
         # Setup build signing if requested
@@ -830,8 +833,8 @@ class Build(Command):
         
         if not cmake_cmd or not cpack_cmd or not ctest_cmd:
             raise Error('CMake tools (cmake, cpack, ctest) not found on PATH!')
-        if not _cmd_exists('candle.exe', path=vs_env.get('PATH')) or not _cmd_exists('light.exe', path=vs_env.get('PATH')) \
-            or not _cmd_exists('heat.exe', path=vs_env.get('PATH')):
+        if not zip_only and not all(_cmd_exists(tool, path=vs_env.get('PATH'))
+                                    for tool in ('candle.exe', 'light.exe', 'heat.exe')):
             raise Error('WiX Toolset (candle.exe, light.exe, heat.exe) not found on the PATH!')
 
         # Start the build
@@ -847,7 +850,7 @@ class Build(Command):
                 self._run_tests(cwd=build_dir, ctest_cmd=ctest_cmd)
 
             logger.info('Packaging application...')
-            _run([cpack_cmd, '-G', 'ZIP;WIX'], cwd=build_dir, env=vs_env, capture_output=False)
+            _run([cpack_cmd, '-G', 'ZIP' if zip_only else 'ZIP;WIX'], cwd=build_dir, env=vs_env, capture_output=False)
 
             artifacts = list(Path(build_dir).glob("*.zip")) + list(Path(build_dir).glob("*.msi"))
             for artifact in artifacts:
@@ -927,7 +930,7 @@ class Build(Command):
         return outfile
 
     def build_linux(self, version, src_dir, output_dir, *, install_prefix, parallelism, cmake_opts, use_system_deps,
-                    platform_target, appimage, docker_image, with_tests, **_):
+                    platform_target, appimage, docker_image, with_tests, no_appimage_update, **_):
         platform_target = _map_platform_target(platform_target, 'amd64', 'aarch64')
         host_platform = _map_platform_target(platform.machine(), 'amd64', 'aarch64')
         if use_system_deps and platform_target != host_platform and not docker_image:
@@ -970,10 +973,11 @@ class Build(Command):
                 appimage_platform = _map_platform_target(platform_target, 'x86_64', 'aarch64')
                 self._build_linux_appimage(
                     version, src_dir, output_dir, app_dir, build_dir, install_prefix, appimage_platform,
-                    docker_args, fix_binfmt=bool(docker_image and platform_target != host_platform))
+                    docker_args, fix_binfmt=bool(docker_image and platform_target != host_platform),
+                    include_update_info=not no_appimage_update)
 
     def _build_linux_appimage(self, version, src_dir, output_dir, app_dir, build_dir, install_prefix,
-                              platform_target, docker_args, fix_binfmt=False):
+                              platform_target, docker_args, fix_binfmt=False, include_update_info=True):
         if (app_dir / 'AppRun').exists():
             raise Error('AppDir has already been run through linuxdeploy! Please create a fresh AppDir and try again.')
 
@@ -1030,9 +1034,11 @@ class Build(Command):
         logger.debug('Running appimagetool...')
         appimage_name = f'KeePassXC-{version}-{platform_target}.AppImage'
         desktop_file.write_text(desktop_file.read_text().strip() + f'\nX-AppImage-Version={version}\n')
-        _run([appimagetool.as_posix(),
-              '--updateinformation=gh-releases-zsync|keepassxreboot|keepassxc|latest|' +
-              f'KeePassXC-*-{platform_target}.AppImage.zsync',
+        update_args = []
+        if include_update_info:
+            update_args = ['--updateinformation=gh-releases-zsync|keepassxreboot|keepassxc|latest|' +
+                           f'KeePassXC-*-{platform_target}.AppImage.zsync']
+        _run([appimagetool.as_posix(), *update_args,
               app_dir.as_posix(), (output_dir.absolute() / appimage_name).as_posix()],
              **run_args)
         # Move appimage zsync file to output dir

@@ -115,6 +115,14 @@ sudo make install
 
 ## Packaging
 
+### Packaging this fork on GitHub
+
+The `release` branch carries this fork's changes. Each push to it runs **Package fork** in GitHub Actions and uploads a macOS 15+ Apple Silicon DMG, a Windows x64 portable ZIP, and a Linux x86_64 AppImage. Open the run's **Artifacts** section to download these builds for 14 days. If Actions is disabled in a newly created fork, enable workflows in the repository's **Actions** tab before pushing.
+
+To publish a version, tag the tested commit on `release` and push that tag. For example, `fork-v0.1.0-beta.1` creates a pre-release and `fork-v0.1.0` creates a regular release. The job builds the tagged source, checks the packages, and uploads all three files and `SHA256SUMS.txt` to GitHub Releases. The workflow produces packages without a publisher signing certificate or Apple notarization. On Linux, grant the downloaded AppImage execute permission before launching it.
+
+### Local packaging
+
 You can create a package to redistribute KeePassXC (zip, deb, rpm, dmg, etc..). Refer to [keepassxc-packaging](https://github.com/keepassxreboot/keepassxc-packaging) for packaging scripts.
 
 To package using CMake, run the following command using whichever [generators](https://cmake.org/cmake/help/latest/manual/cpack-generators.7.html) you would like to package with.

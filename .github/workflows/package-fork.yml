@@ -1,0 +1,165 @@
+name: Package fork
+
+on:
+  push:
+    branches: [release]
+    tags: ['fork-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, platform: macOS-arm64, extension: dmg }
+          - { runner: windows-2022, platform: Windows-x64, extension: zip }
+          - { runner: ubuntu-24.04, platform: Linux-x86_64, extension: AppImage }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Identify the source and package
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          short_sha=$(git rev-parse --short=8 HEAD)
+          build_id="fork-$short_sha"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            [[ "$GITHUB_REF_NAME" =~ ^fork-v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
+            git merge-base --is-ancestor HEAD origin/release
+            build_id="$GITHUB_REF_NAME"
+          fi
+          upstream_version=$(python -c 'import json; print(json.load(open("vcpkg.json"))["version-string"])')
+          echo "UPSTREAM_VERSION=$upstream_version" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=$upstream_version-$build_id" >> "$GITHUB_ENV"
+          echo "PACKAGE_NAME=KeePassXC-$build_id-$PLATFORM" >> "$GITHUB_ENV"
+
+      - name: Install Qt
+        if: runner.os != 'Linux'
+        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4
+        with:
+          version: '6.8.3'
+          arch: ${{ runner.os == 'Windows' && 'win64_msvc2022_64' || 'clang_64' }}
+          cache: true
+
+      - name: Build macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          brew install asciidoctor botan minizip qrencode readline
+          export CMAKE_PREFIX_PATH="$QT_ROOT_DIR:$(brew --prefix minizip):$(brew --prefix readline):$(brew --prefix)"
+          python3 release-tool.py build "$UPSTREAM_VERSION" --snapshot --override-version "$BUILD_VERSION" \
+            --use-system-deps --macos-target 15 -p arm64 -o packages \
+            -c -DKPXC_FEATURE_NETWORK=ON -DKPXC_FEATURE_UPDATES=OFF
+
+      - name: Build Windows portable ZIP
+        if: runner.os == 'Windows'
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: |
+          gem install asciidoctor --no-document
+          python release-tool.py build "$UPSTREAM_VERSION" --snapshot --override-version "$BUILD_VERSION" \
+            --zip-only -p amd64 -o packages \
+            -c -DKPXC_FEATURE_NETWORK=ON -DKPXC_FEATURE_UPDATES=OFF
+
+      - name: Build and test Linux AppImage
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends asciidoctor ninja-build libbotan-2-dev \
+            libkeyutils-dev libminizip-dev libpcsclite-dev libqrencode-dev libreadline-dev libusb-1.0-0-dev \
+            libxi-dev libxkbcommon-dev libxtst-dev qt6-base-dev qt6-base-dev-tools qt6-l10n-tools \
+            qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev qt6-qpa-plugins qt6-wayland zlib1g-dev \
+            libfuse2t64 file desktop-file-utils xvfb xauth dbus-x11
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x1024x24' \
+            python3 release-tool.py build "$UPSTREAM_VERSION" --snapshot --override-version "$BUILD_VERSION" \
+            --use-system-deps --appimage --no-appimage-update --with-tests -g Ninja -p x86_64 -o packages \
+            -c -DKPXC_FEATURE_NETWORK=ON -DKPXC_FEATURE_UPDATES=OFF
+
+      - name: Collect package
+        env:
+          EXTENSION: ${{ matrix.extension }}
+        run: |
+          shopt -s nullglob
+          files=(packages/*."$EXTENSION")
+          [[ ${#files[@]} == 1 ]]
+          mkdir dist
+          mv "${files[0]}" "dist/$PACKAGE_NAME.$EXTENSION"
+
+      - name: Check the packaged macOS executable
+        if: runner.os == 'macOS'
+        run: |
+          mount_dir=$(mktemp -d)
+          hdiutil attach "dist/$PACKAGE_NAME.dmg" -readonly -nobrowse -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir"' EXIT
+          "$mount_dir/KeePassXC.app/Contents/MacOS/keepassxc-cli" --version
+
+      - name: Check the packaged Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "package-check"
+          Expand-Archive "dist/$env:PACKAGE_NAME.zip" $dir
+          $cli = Get-ChildItem $dir -Recurse -Filter keepassxc-cli.exe | Select-Object -First 1
+          if (-not $cli) { throw "Packaged CLI missing" }
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+          & $cli.FullName --version
+          exit $LASTEXITCODE
+
+      - name: Check the packaged Linux executable
+        if: runner.os == 'Linux'
+        run: APPIMAGE_EXTRACT_AND_RUN=1 "./dist/$PACKAGE_NAME.AppImage" cli --version
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish tagged packages
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: KeePassXC-*
+          merge-multiple: true
+          path: dist
+
+      - name: Attach builds and checksums to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        working-directory: dist
+        run: |
+          assets=("KeePassXC-$TAG-macOS-arm64.dmg" "KeePassXC-$TAG-Windows-x64.zip" "KeePassXC-$TAG-Linux-x86_64.AppImage")
+          sha256sum "${assets[@]}" > SHA256SUMS.txt
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --title "KeePassXC $TAG" --generate-notes
+          fi
+          [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]]
+          gh release upload "$TAG" "${assets[@]}" SHA256SUMS.txt --clobber
+          if [[ "${TAG#fork-v}" == *-* ]]; then
+            gh release edit "$TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$TAG" --draft=false
+          fi
