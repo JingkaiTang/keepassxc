@@ -118,14 +118,19 @@ jobs:
 
       - name: Check the packaged Windows executable
         if: runner.os == 'Windows'
+        timeout-minutes: 5
+        env:
+          QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES: '1'
         shell: pwsh
         run: |
           $dir = Join-Path $env:RUNNER_TEMP "package-check"
+          Write-Host "Extracting $env:PACKAGE_NAME.zip"
           Expand-Archive "dist/$env:PACKAGE_NAME.zip" $dir
           $cli = Get-ChildItem $dir -Recurse -Filter keepassxc-cli.exe | Select-Object -First 1
           if (-not $cli) { throw "Packaged CLI missing" }
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           Remove-Item Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+          Write-Host "Checking $($cli.FullName)"
           & $cli.FullName --version
           exit $LASTEXITCODE
 
