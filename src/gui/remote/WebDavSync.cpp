@@ -231,7 +231,7 @@ void WebDavSync::reconcile(const QString& path,
         return;
     }
     using Action = WebDavSession::ConflictAction;
-    auto waitForReview = [&](const QString& message, Action action = Action::Review) {
+    auto waitForReview = [&](const QString& message, Action action) {
         m_waitingPath = path;
         m_waitingMessage = message;
         m_waitingRevision = revision;
@@ -295,7 +295,8 @@ void WebDavSync::reconcile(const QString& path,
         return;
     }
     if (!opened) {
-        waitForReview(tr("Unlock the updated WebDAV database to review it. Your local copy is preserved."));
+        waitForReview(tr("Unlock the updated WebDAV database to review it. Your local copy is preserved."),
+                      Action::Review);
         return;
     }
 
@@ -313,7 +314,8 @@ void WebDavSync::reconcile(const QString& path,
     }
     if ((plan.chooseStructure || !plan.conflicts.isEmpty()) && choices.isEmpty()) {
         waitForReview(hasBase ? tr("Conflicting changes need your review. The entire upload is on hold.")
-                              : tr("The common baseline is unavailable. Review both versions before syncing."));
+                              : tr("The common baseline is unavailable. Review both versions before syncing."),
+                      Action::Review);
         if (interactive) {
             chooseVersions(plan, path, revision, unlocked);
         }
