@@ -112,7 +112,7 @@ endif()
 message(STATUS "Found Git HEAD Revision: ${GIT_HEAD}\n")
 
 # KeePassXC Versioning and Build Type
-set(OVERRIDE_VERSION "" CACHE STRING "Override the KeePassXC Version for Snapshot builds")
+set(OVERRIDE_VERSION "" CACHE STRING "Override the displayed KeePassXC version")
 set(KEEPASSXC_BUILD_TYPE "Snapshot" CACHE STRING "Set KeePassXC build type to distinguish between stable releases and snapshots")
 set_property(CACHE KEEPASSXC_BUILD_TYPE PROPERTY STRINGS Snapshot Release)
 
@@ -122,10 +122,10 @@ execute_process(COMMAND git tag --points-at HEAD
         OUTPUT_VARIABLE GIT_TAG
         ERROR_QUIET)
 string(REGEX REPLACE "latest" "" GIT_TAG "${GIT_TAG}")
-if(GIT_TAG MATCHES "[0-9]+\.[0-9]+\.[0-9]+")
+if(NOT OVERRIDE_VERSION AND GIT_TAG MATCHES "[0-9]+\.[0-9]+\.[0-9]+")
     string(STRIP "${GIT_TAG}" GIT_TAG)
     set(OVERRIDE_VERSION ${GIT_TAG})
-elseif(EXISTS ${CMAKE_SOURCE_DIR}/.version)
+elseif(NOT OVERRIDE_VERSION AND EXISTS ${CMAKE_SOURCE_DIR}/.version)
     file(READ ${CMAKE_SOURCE_DIR}/.version OVERRIDE_VERSION)
 endif()
 

@@ -671,7 +671,10 @@ class Build(Command):
         parser.add_argument('-g', '--cmake-generator', help='Override default CMake generator.')
         parser.add_argument('-i', '--install-prefix', default='/usr/local',
                             help='Build install prefix (default: %(default)s).')
-        parser.add_argument('--snapshot', help='Build snapshot from current HEAD.', action='store_true')
+        source = parser.add_mutually_exclusive_group()
+        source.add_argument('--snapshot', help='Build snapshot from current HEAD.', action='store_true')
+        source.add_argument('--release-from-head', help='Build a release from the checked-out source version.',
+                            action='store_true')
         parser.add_argument('--use-system-deps', help='Use system dependencies instead of vcpkg.', action='store_true')
         parser.add_argument('-j', '--parallelism', default=os.cpu_count(), type=int,
                             help='Build parallelism (default: %(default)s).')
@@ -752,7 +755,13 @@ class Build(Command):
             cmake_opts.append('-DKEEPASSXC_BUILD_TYPE=Snapshot')
             version += '-snapshot'
         else:
-            Check.perform_version_checks(version, src_dir, tag_name, version_exists=True, checkout=True)
+            if kwargs.get('release_from_head'):
+                Check.check_working_tree_clean(src_dir)
+                Check.check_version_in_cmake(version, src_dir)
+                Check.check_version_in_vcpkg_manifest(version, src_dir)
+                cmake_opts.append(f'-DOVERRIDE_VERSION={version}')
+            else:
+                Check.perform_version_checks(version, src_dir, tag_name, version_exists=True, checkout=True)
             cmake_opts.append('-DKEEPASSXC_BUILD_TYPE=Release')
 
         if kwargs['override_version']:
