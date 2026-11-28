@@ -2692,6 +2692,10 @@ exit
 <context>
     <name>DatabaseTabWidget</name>
     <message>
+        <source>%1 [WebDAV login required]</source>
+        <translation>%1 [需要 WebDAV 登录]</translation>
+    </message>
+    <message>
         <source>Database creation error</source>
         <translation>数据库创建错误</translation>
     </message>
@@ -2790,6 +2794,10 @@ This is definitely a bug, please report it to the developers.</source>
 </context>
 <context>
     <name>DatabaseWidget</name>
+    <message>
+        <source>Save Local Copy…</source>
+        <translation>另存本地副本…</translation>
+    </message>
     <message>
         <source>Searches and Tags</source>
         <translation>搜索与标签</translation>

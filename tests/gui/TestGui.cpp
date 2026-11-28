@@ -631,6 +631,11 @@ void TestGui::testWebDavDatabase_data()
     QTest::newRow("remote master key changed") << false << QString("rekey") << QByteArray("\"1\"");
     QTest::newRow("unsaved desktop change") << false << QString("unsaved") << QByteArray("\"1\"");
     QTest::newRow("sync feedback follows the active tab") << false << QString("status") << QByteArray("\"1\"");
+    QTest::newRow("background login with cache") << false << QString("cached-login") << QByteArray("\"1\"");
+    QTest::newRow("background login before first download") << false << QString("uncached-login") << QByteArray("\"1\"");
+    QTest::newRow("incompatible database roots") << false << QString("root") << QByteArray("\"1\"");
+    QTest::newRow("local edits with no remote validator") << false << QString("readonly-conflict") << QByteArray("\"1\"");
+    QTest::newRow("unverified writes with local edits") << false << QString("probe-conflict") << QByteArray("\"1\"");
     QTest::newRow("check on unlock") << false << QString("locked") << QByteArray("\"1\"");
 }
 
@@ -766,6 +771,9 @@ void TestGui::testWebDavDatabase()
         QTRY_COMPARE(bar->currentMessage(), QString("Synced to WebDAV"));
         QTRY_VERIFY_WITH_TIMEOUT(bar->currentMessage().isEmpty(), 5000);
         QVERIFY(!banner->isVisible());
+    } else if (scenario == "cached-login" || scenario == "uncached-login") {
+        checkWebDavBackgroundLogin(server, scenario == "uncached-login");
+        session = m_dbWidget->webDavSession();
     } else if (!scenario.isEmpty()) {
         checkWebDavMerge(server, scenario);
     } else {
@@ -815,6 +823,52 @@ void TestGui::testWebDavDatabase()
     QTRY_VERIFY(!closingSession);
 }
 
+void TestGui::checkWebDavBackgroundLogin(MockWebDavServer& server, bool removeCache)
+{
+    const auto reference = m_dbWidget->databaseReference();
+    QPointer<WebDavSession> oldSession = m_dbWidget->webDavSession();
+    const auto workingFile = oldSession->localPath();
+    m_tabWidget->addDatabaseTab(m_dbFilePath);
+    auto* localTab = m_tabWidget->currentDatabaseWidget();
+    QVERIFY(m_tabWidget->closeDatabaseTab(m_dbWidget));
+    QTRY_VERIFY(!oldSession);
+    if (removeCache) {
+        QVERIFY(QFile::remove(workingFile));
+    }
+    server.password = "replacement-password";
+    m_tabWidget->addDatabaseTab(reference, true);
+    QTRY_COMPARE(m_tabWidget->count(), 2);
+    m_dbWidget = m_tabWidget->databaseWidgetFromIndex(1);
+    auto* session = m_dbWidget->webDavSession();
+    QTRY_VERIFY(session->needsAuthentication());
+    QVERIFY(m_tabWidget->tabText(1).contains("WebDAV login required"));
+    QCOMPARE(m_tabWidget->currentDatabaseWidget(), localTab);
+    QVERIFY(!m_mainWindow->findChild<QDialog*>("webDavDialog"));
+
+    m_tabWidget->setCurrentWidget(m_dbWidget);
+    QPointer<QDialog> dialog;
+    QTRY_VERIFY((dialog = m_mainWindow->findChild<QDialog*>("webDavDialog")) && dialog->isVisible());
+    if (!removeCache) {
+        dialog->reject();
+        QTRY_VERIFY(!dialog);
+        QCOMPARE(m_tabWidget->count(), 2);
+        m_tabWidget->setCurrentWidget(localTab);
+        m_tabWidget->setCurrentWidget(m_dbWidget);
+        QTRY_VERIFY((dialog = m_mainWindow->findChild<QDialog*>("webDavDialog")) && dialog->isVisible());
+    }
+    dialog->findChild<QLineEdit*>("webDavUser")->setText("alice");
+    dialog->findChild<QLineEdit*>("webDavPassword")->setText(QString::fromUtf8(server.password));
+    dialog->findChild<QCheckBox*>("webDavRemember")->setChecked(false);
+    QTest::mouseClick(dialog->findChild<QDialogButtonBox*>("buttonBox")->button(QDialogButtonBox::Ok), Qt::LeftButton);
+    QTRY_COMPARE(session->statusText(), QString("Synced"));
+    QVERIFY(!m_tabWidget->tabText(1).contains("WebDAV login required"));
+    QVERIFY(m_dbWidget->isEnabled());
+    m_dbWidget->performUnlockDatabase("a");
+    QTRY_VERIFY(!m_dbWidget->isLocked());
+    m_db = m_dbWidget->database();
+    QVERIFY(m_tabWidget->closeDatabaseTab(localTab));
+}
+
 void TestGui::checkWebDavMerge(MockWebDavServer& server, const QString& scenario)
 {
     auto addEntry = [](Database* database, const QString& title) {
@@ -830,6 +884,9 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server, const QString& scenario
     QVERIFY(mobile.open(m_dbFilePath, m_db->key()));
     const auto commonId = mobile.rootGroup()->entriesRecursive().first()->uuid();
     const auto mobileEntry = addEntry(&mobile, "Mobile entry");
+    if (scenario == "root") {
+        mobile.rootGroup()->setUuid(QUuid::createUuid());
+    }
     QUuid otherId;
     if (scenario == "edits") {
         const auto entries = m_db->rootGroup()->entriesRecursive();
@@ -974,6 +1031,12 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server, const QString& scenario
         QCOMPARE(m_db->rootGroup()->findGroupByUuid(groupId)->name(), QString("Group edited during download"));
         return;
     }
+    if (scenario == "readonly-conflict") {
+        server.etag.clear();
+    } else if (scenario == "probe-conflict") {
+        server.etag = "unprotected-bare";
+        server.ignoreStaleProbe = true;
+    }
     const auto expectedTag = scenario == "third" ? QByteArray("\"third\"") : server.etag;
 
     const auto desktopEntry = addEntry(m_db.data(), "Desktop entry");
@@ -981,6 +1044,35 @@ void TestGui::checkWebDavMerge(MockWebDavServer& server, const QString& scenario
         session->checkForChanges();
     } else {
         QVERIFY(m_dbWidget->save());
+    }
+    if (scenario == "root" || scenario == "readonly-conflict" || scenario == "probe-conflict") {
+        auto* copy = m_dbWidget->findChild<QPushButton*>("webDavSaveLocalCopyButton");
+        auto* merge = m_dbWidget->findChild<QPushButton*>("webDavMergeButton");
+        QVERIFY(copy && merge);
+        QTRY_VERIFY(copy->isVisible());
+        QVERIFY(!merge->isVisible());
+        TemporaryFile backup;
+        fileDialog()->setNextFileName(backup.fileName());
+        QTest::mouseClick(copy, Qt::LeftButton);
+        Database recovered;
+        QVERIFY(recovered.open(backup.fileName(), m_db->key()));
+        QVERIFY(recovered.rootGroup()->findEntryByUuid(desktopEntry));
+        QVERIFY(!recovered.rootGroup()->findEntryByUuid(mobileEntry));
+        QCOMPARE(m_dbWidget->webDavSession(), session);
+        QVERIFY(session->hasConflict());
+        QCOMPARE(server.contents, mobileContents);
+        QVERIFY(server.uploaded.isEmpty());
+
+        // Once the server restores the common database, normal synchronization resumes.
+        QFile original(m_dbFilePath);
+        QVERIFY(original.open(QIODevice::ReadOnly));
+        server.contents = original.readAll();
+        server.etag = "\"restored\"";
+        session->retry();
+        QTRY_COMPARE(server.uploaded.size(), 1);
+        QTRY_VERIFY(!session->hasPendingUpload());
+        QVERIFY(!copy->isVisible());
+        return;
     }
     if (conflict) {
         QTRY_VERIFY(session->hasConflict());

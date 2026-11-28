@@ -7,7 +7,6 @@
 #include "gui/entry/EntryView.h"
 #include "gui/group/GroupView.h"
 #include "networking/WebDavMerge.h"
-#include "networking/WebDavSession.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -228,14 +227,16 @@ void WebDavSync::reconcile(const QString& path,
         return;
     }
     if (!interactive && !local->isModified() && path == m_waitingPath && revision == m_waitingRevision) {
-        m_session->reportReview(m_waitingMessage);
+        m_session->reportReview(m_waitingMessage, m_waitingAction);
         return;
     }
-    auto waitForReview = [&](const QString& message) {
+    using Action = WebDavSession::ConflictAction;
+    auto waitForReview = [&](const QString& message, Action action = Action::Review) {
         m_waitingPath = path;
         m_waitingMessage = message;
         m_waitingRevision = revision;
-        m_session->reportReview(message);
+        m_waitingAction = action;
+        m_session->reportReview(message, action);
     };
     m_applying = true;
     m_session->pauseChecks(true);
@@ -251,10 +252,15 @@ void WebDavSync::reconcile(const QString& path,
             }
         }
     });
+    if (m_session->isReadOnly() && (local->isModified() || !m_session->canReceiveRemote())) {
+        m_session->reportReview(tr("Local changes are preserved. This WebDAV connection cannot safely upload them."),
+                                Action::SaveLocalCopy);
+        return;
+    }
     if (local->isModified()) {
         // The editor has closed. Checkpoint its committed changes behind the session's
         // conflict barrier before computing a plan from the encrypted working copy.
-        if (!m_session->isReadOnly() && m_widget->save() && self && interactive) {
+        if (m_widget->save() && self && interactive) {
             m_reviewRequested = true;
         }
         return;
@@ -292,10 +298,6 @@ void WebDavSync::reconcile(const QString& path,
         waitForReview(tr("Unlock the updated WebDAV database to review it. Your local copy is preserved."));
         return;
     }
-    if (m_session->isReadOnly()) {
-        m_session->reportReview(tr("Local changes are preserved. This WebDAV connection cannot safely upload them."));
-        return;
-    }
 
     Database base;
     const auto basePath = m_session->basePath();
@@ -305,7 +307,8 @@ void WebDavSync::reconcile(const QString& path,
     }
     WebDavMerge plan(hasBase ? &base : nullptr, *local, *remote);
     if (!plan.compatible) {
-        waitForReview(tr("The remote file has a different database root. Your local copy is preserved."));
+        waitForReview(tr("The remote file has a different database root. Your local copy is preserved."),
+                      Action::SaveLocalCopy);
         return;
     }
     if ((plan.chooseStructure || !plan.conflicts.isEmpty()) && choices.isEmpty()) {
@@ -330,7 +333,8 @@ void WebDavSync::reconcile(const QString& path,
         return;
     }
     if (!plan.apply(*candidate, choices)) {
-        m_session->reportReview(tr("The selected changes need manual review because their destination group changed."));
+        m_session->reportReview(tr("The selected changes need manual review because their destination group changed."),
+                                choices.isEmpty() ? Action::SaveLocalCopy : Action::Review);
         return;
     }
     if (unlocked && !useLocal && !candidate->setKey(local->key())) {

@@ -379,18 +379,23 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
         merge->setObjectName("webDavMergeButton");
         layout->addWidget(label, 1);
         layout->addWidget(merge);
+        auto* saveCopy = new QPushButton(tr("Save Local Copy…"), banner);
+        saveCopy->setObjectName("webDavSaveLocalCopyButton");
+        layout->addWidget(saveCopy);
         static_cast<QVBoxLayout*>(m_mainWidget->layout())->insertWidget(0, banner);
         m_webDavBanner = banner;
 
-        auto refresh = [this, session, banner, label, merge] {
+        auto refresh = [this, session, banner, label, merge, saveCopy] {
             m_db->setReadOnly(session->isReadOnly());
             label->setText(session->statusText());
-            merge->setVisible(session->hasConflict());
+            merge->setVisible(session->conflictAction() == WebDavSession::ConflictAction::Review);
+            saveCopy->setVisible(session->conflictAction() == WebDavSession::ConflictAction::SaveLocalCopy);
             banner->setVisible(session->status() == WebDavSession::Status::NeedsAttention);
         };
         connect(session, &WebDavSession::statusChanged, banner, refresh);
         m_webDavSync = new WebDavSync(this, session, banner);
         connect(merge, &QPushButton::clicked, m_webDavSync, &WebDavSync::review);
+        connect(saveCopy, &QPushButton::clicked, this, &DatabaseWidget::saveBackup);
         refresh();
         if (isLocked()) {
             switchToOpenDatabase(m_db->filePath());
@@ -2794,9 +2799,15 @@ bool DatabaseWidget::saveBackup()
                                      + (defaultFileName.isEmpty() ? tr("Passwords").append(".kdbx") : defaultFileName));
     }
 
+    QString suggestedPath = FileDialog::getLastDir("backup", oldFilePath);
+#ifdef KPXC_FEATURE_NETWORK
+    if (m_webDav) {
+        suggestedPath = QDir(FileDialog::getLastDir("backup")).filePath(displayFileName());
+    }
+#endif
     const QString newFilePath = fileDialog()->getSaveFileName(this,
                                                               tr("Save Database Backup"),
-                                                              FileDialog::getLastDir("backup", oldFilePath),
+                                                              suggestedPath,
                                                               tr("KeePass 2 Database").append(" (*.kdbx)"));
 
     // Early out if we canceled the file selection
