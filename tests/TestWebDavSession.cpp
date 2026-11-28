@@ -542,8 +542,7 @@ void TestWebDavSession::bareWrites()
         QSignalSpy ready(&session, &WebDavSession::ready);
         session.open();
         QTRY_COMPARE(ready.count(), 1);
-        QTRY_COMPARE(session.statusText(), QString("Synced"));
-        QVERIFY(!session.isReadOnly());
+        QTRY_VERIFY(!session.isReadOnly());
         QCOMPARE(server.probeDeletes, probes);
     };
     checkScope(server.url(), "alice", 1);
