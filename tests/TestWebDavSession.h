@@ -36,6 +36,7 @@ private slots:
     void legacyCache_data();
     void legacyCache();
     void rateLimitedCheck();
+    void lockedUploadRetries();
     void conflictAndMerge_data();
     void conflictAndMerge();
     void offlineRecovery();
@@ -45,6 +46,7 @@ private slots:
     void readOnly();
     void bareWrites_data();
     void bareWrites();
+    void rateLimitedBareVerification();
     void weakWrites_data();
     void weakWrites();
     void renewCredentials();

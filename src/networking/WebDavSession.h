@@ -49,9 +49,6 @@ public:
     void setCredentials(const QString& user, const QString& password);
     void open();
     void localSaved();
-    bool needsWriteVerification() const;
-    bool canProbeWrites() const;
-    void probeWrites();
     void retry();
     void setChecksEnabled(bool enabled);
     void checkForChanges();
@@ -99,6 +96,7 @@ private:
     void publishReady();
     void request(Operation operation);
     QString bareProofPath() const;
+    bool verifyBareWrites(const QByteArray& tag);
     void startLockedUpload(const QString& snapshot);
     void disableWrites();
     void readResponse();
@@ -150,6 +148,7 @@ private:
     QByteArray m_rejectedEtag;
     QByteArray m_disabledTag;
     bool m_bareVerified = false;
+    QString m_probeError;
     std::shared_ptr<std::atomic_bool> m_workerCanceled;
     std::unique_ptr<QTemporaryFile> m_transfer;
     std::unique_ptr<QTemporaryFile> m_mergeFile;

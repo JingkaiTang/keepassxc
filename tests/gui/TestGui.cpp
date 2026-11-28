@@ -700,23 +700,10 @@ void TestGui::testWebDavDatabase()
     auto* pending = m_mainWindow->findChild<QLabel*>("webDavPendingStatus");
     QVERIFY(banner && pending);
     if (initialTag == "bare-1") {
-        QTRY_VERIFY(session->canProbeWrites());
-        auto* verify = m_dbWidget->findChild<QPushButton*>("webDavVerifyWritesButton");
-        QVERIFY(verify && verify->isVisible());
-        server.holdRead = true;
-        session->checkForChanges();
-        QTRY_VERIFY(server.heldRead);
-        QVERIFY(verify->isVisible());
-        QVERIFY(!verify->isEnabled());
-        server.releaseRead();
-        QTRY_VERIFY(verify->isEnabled());
-        QVERIFY(m_db->isReadOnly());
-        MessageBox::setNextAnswer(MessageBox::Cancel);
-        QTest::mouseClick(verify, Qt::LeftButton);
-        QCOMPARE(server.probeCreates, 0);
-        MessageBox::setNextAnswer(MessageBox::Yes);
-        QTest::mouseClick(verify, Qt::LeftButton);
         QTRY_VERIFY(!m_db->isReadOnly());
+        QVERIFY(!banner->isVisible());
+        QVERIFY(!m_dbWidget->findChild<QPushButton*>("webDavVerifyWritesButton"));
+        QCOMPARE(server.probeCreates, 1);
         QCOMPARE(server.probeDeletes, 1);
         QVERIFY(server.preconditions.isEmpty());
     }

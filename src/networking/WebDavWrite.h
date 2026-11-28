@@ -35,6 +35,9 @@ namespace WebDavWrite
     {
         bool passed = false;
         QString leftover;
+        bool loginRequired = false;
+        bool retry = false;
+        qint64 retryAfter = 0;
     };
 
     // Both operations run on a worker thread. No live database bytes are used for the probe.

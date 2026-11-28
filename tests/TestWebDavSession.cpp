@@ -141,21 +141,18 @@ void TestWebDavSession::backgroundChecks()
     QSignalSpy notices(&session, &WebDavSession::notice);
     session.open();
     QTRY_COMPARE(ready.count(), 1);
-    const auto synced = session.statusText();
-    // A bare ETag keeps its read-only warning throughout the HEAD/GET check.
-    // Its write-verification action becomes available again when the last reply is done.
-    auto checkFinished = [&] {
-        return session.statusText() == synced && (!session.needsWriteVerification() || session.canProbeWrites());
-    };
+    QTRY_COMPARE(session.statusText(), QString("Synced"));
+    const auto readsBeforeCheck = server.reads.size();
+    const auto downloadsBeforeCheck = server.downloaded;
     session.setChecksEnabled(true);
     session.checkForChanges();
     session.checkForChanges();
-    QTRY_VERIFY(server.reads.size() > 1 && checkFinished());
+    QTRY_VERIFY(server.reads.size() > readsBeforeCheck && session.statusText() == QString("Synced"));
     if (tag.startsWith('"')) {
         QCOMPARE(server.ifNoneMatch.last(), tag);
-        QCOMPARE(server.downloaded, 1);
+        QCOMPARE(server.downloaded, downloadsBeforeCheck);
     } else {
-        QCOMPARE(server.downloaded, 2);
+        QCOMPARE(server.downloaded, downloadsBeforeCheck + 1);
     }
     QCOMPARE(changed.count(), 0);
     QCOMPARE(notices.count(), 0);
@@ -171,7 +168,7 @@ void TestWebDavSession::backgroundChecks()
     const auto downloads = server.downloaded;
     const auto requests = server.reads.size();
     session.checkForChanges();
-    QTRY_VERIFY(server.reads.size() > requests && checkFinished());
+    QTRY_VERIFY(server.reads.size() > requests && session.statusText() == QString("Synced"));
     if (tag == "one" && consistentHead) {
         QCOMPARE(server.reads.last(), QByteArray("HEAD"));
         QCOMPARE(server.downloaded, downloads);
@@ -180,7 +177,7 @@ void TestWebDavSession::backgroundChecks()
     }
     QCOMPARE(notices.count(), 1);
     QCOMPARE(notices.first().first().toString(), QString("Loaded changes from WebDAV"));
-    QCOMPARE(server.probeCreates, 0);
+    QCOMPARE(server.probeCreates, tag == "one" ? 1 : 0);
     QVERIFY(server.preconditions.isEmpty());
 }
 
@@ -280,6 +277,26 @@ void TestWebDavSession::rateLimitedCheck()
     QCOMPARE(server.reads, reads);
     QVERIFY(server.preconditions.isEmpty());
     QCOMPARE(readFile(session.localPath()), m_changed);
+}
+
+void TestWebDavSession::lockedUploadRetries()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    QSignalSpy ready(&session, &WebDavSession::ready);
+    session.open();
+    QTRY_COMPARE(ready.count(), 1);
+    server.rejectNextLockedUpload = true;
+    QVERIFY(commitLocalSave(session.localPath(), m_changed));
+    session.localSaved();
+    QTRY_COMPARE(session.statusText(), QString("Saved locally, waiting to sync"));
+    QVERIFY(session.hasPendingUpload());
+    QCOMPARE(server.contents, m_original);
+    QTRY_COMPARE_WITH_TIMEOUT(server.contents, m_changed, 10000);
+    QTRY_VERIFY(!session.hasPendingUpload());
+    QCOMPARE(server.uploaded, QList<QByteArray>({m_changed}));
 }
 
 void TestWebDavSession::consecutiveSaves()
@@ -487,17 +504,20 @@ void TestWebDavSession::bareWrites()
         QSignalSpy ready(&session, &WebDavSession::ready);
         session.open();
         QTRY_COMPARE(ready.count(), 1);
-        QVERIFY(session.isReadOnly());
-        QVERIFY(session.canProbeWrites());
-        QCOMPARE(server.probeCreates, 0);
-        session.probeWrites();
         QTRY_COMPARE(server.probeDeletes, 1);
-        QTRY_VERIFY(session.canProbeWrites() || !session.isReadOnly());
+        QTRY_COMPARE(session.status(), ignoresStale ? WebDavSession::Status::NeedsAttention : WebDavSession::Status::Normal);
+        QCOMPARE(server.probeCreates, 1);
         QCOMPARE(session.isReadOnly(), ignoresStale);
         QCOMPARE(server.probeMatches, QList<QByteArray>({"test-1", "test-1"}));
         QCOMPARE(server.contents, m_original);
         QVERIFY(server.preconditions.isEmpty());
         if (ignoresStale) {
+            const auto reads = server.reads.size();
+            session.setChecksEnabled(true);
+            QTRY_VERIFY(server.reads.size() >= reads + 2);
+            QTRY_COMPARE(session.status(), WebDavSession::Status::NeedsAttention);
+            QCOMPARE(server.probeCreates, 1);
+            QVERIFY(server.uploaded.isEmpty());
             return;
         }
         QVERIFY(commitLocalSave(session.localPath(), m_changed));
@@ -516,19 +536,41 @@ void TestWebDavSession::bareWrites()
         QCOMPARE(readFile(session.localPath()), m_original);
         QCOMPARE(server.preconditions.last(), accepted);
     }
-    const auto checkScope = [](const QUrl& url, const QString& user, bool readOnly) {
+    const auto checkScope = [&server](const QUrl& url, const QString& user, int probes) {
         WebDavSession session(WebDavSession::referenceFor(url, user), url);
         session.setCredentials(user, {});
         QSignalSpy ready(&session, &WebDavSession::ready);
         session.open();
         QTRY_COMPARE(ready.count(), 1);
-        QCOMPARE(session.isReadOnly(), readOnly);
+        QTRY_COMPARE(session.statusText(), QString("Synced"));
+        QVERIFY(!session.isReadOnly());
+        QCOMPARE(server.probeDeletes, probes);
     };
-    checkScope(server.url(), "alice", false);
-    checkScope(server.url().resolved(QUrl("sibling.kdbx")), "alice", false);
-    checkScope(server.url(), "bob", true);
-    checkScope(server.url().resolved(QUrl("other/vault.kdbx")), "alice", true);
-    QCOMPARE(server.probeCreates, 1);
+    checkScope(server.url(), "alice", 1);
+    checkScope(server.url().resolved(QUrl("sibling.kdbx")), "alice", 1);
+    checkScope(server.url(), "bob", 2);
+    checkScope(server.url().resolved(QUrl("other/vault.kdbx")), "alice", 3);
+}
+
+void TestWebDavSession::rateLimitedBareVerification()
+{
+    MockWebDavServer server;
+    QVERIFY(server.start());
+    server.contents = m_original;
+    server.etag = "bare-1";
+    server.rateLimitNextProbe = true;
+    WebDavSession session(WebDavSession::referenceFor(server.url(), "alice"), server.url());
+    session.setCredentials("alice", {});
+    QSignalSpy ready(&session, &WebDavSession::ready);
+    session.open();
+    QTRY_COMPARE(ready.count(), 1);
+    QTRY_COMPARE(session.statusText(), QString("Waiting to verify WebDAV writes"));
+    QVERIFY(session.isReadOnly());
+    QCOMPARE(server.probeCreates, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(session.statusText(), QString("Synced"), 10000);
+    QVERIFY(!session.isReadOnly());
+    QCOMPARE(server.probeDeletes, 1);
+    QVERIFY(server.uploaded.isEmpty());
 }
 
 void TestWebDavSession::weakWrites_data()
