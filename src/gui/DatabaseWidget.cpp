@@ -379,31 +379,18 @@ void DatabaseWidget::setWebDavSession(WebDavSession* session)
         merge->setObjectName("webDavMergeButton");
         layout->addWidget(label, 1);
         layout->addWidget(merge);
-        auto* verify = new QPushButton(tr("Verify conditional writes…"), banner);
-        verify->setObjectName("webDavVerifyWritesButton");
-        layout->addWidget(verify);
         static_cast<QVBoxLayout*>(m_mainWidget->layout())->insertWidget(0, banner);
         m_webDavBanner = banner;
 
-        auto refresh = [this, session, banner, label, merge, verify] {
+        auto refresh = [this, session, banner, label, merge] {
             m_db->setReadOnly(session->isReadOnly());
             label->setText(session->statusText());
-            verify->setVisible(session->needsWriteVerification());
-            verify->setEnabled(session->canProbeWrites());
             merge->setVisible(session->hasConflict());
             banner->setVisible(session->status() == WebDavSession::Status::NeedsAttention);
         };
         connect(session, &WebDavSession::statusChanged, banner, refresh);
         m_webDavSync = new WebDavSync(this, session, banner);
         connect(merge, &QPushButton::clicked, m_webDavSync, &WebDavSync::review);
-        connect(verify, &QPushButton::clicked, this, [this, session] {
-            if (MessageBox::question(this, tr("Verify conditional writes"),
-                                     tr("Create, update and delete a temporary file in this WebDAV folder to check "
-                                        "that the server rejects outdated writes?"),
-                                     MessageBox::Yes | MessageBox::Cancel, MessageBox::Cancel) == MessageBox::Yes) {
-                session->probeWrites();
-            }
-        });
         refresh();
         if (isLocked()) {
             switchToOpenDatabase(m_db->filePath());

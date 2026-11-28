@@ -2791,18 +2791,6 @@ This is definitely a bug, please report it to the developers.</source>
 <context>
     <name>DatabaseWidget</name>
     <message>
-        <source>Verify conditional writes…</source>
-        <translation>验证条件写入…</translation>
-    </message>
-    <message>
-        <source>Verify conditional writes</source>
-        <translation>验证条件写入</translation>
-    </message>
-    <message>
-        <source>Create, update and delete a temporary file in this WebDAV folder to check that the server rejects outdated writes?</source>
-        <translation>将在此 WebDAV 文件夹中创建、更新并删除一个临时文件，以验证服务器会拒绝过期版本的写入。是否继续？</translation>
-    </message>
-    <message>
         <source>Searches and Tags</source>
         <translation>搜索与标签</translation>
     </message>
@@ -10834,6 +10822,10 @@ Example: JBSWY3DPEHPK3PXP</source>
         <translation>只读：服务器未通过条件写入验证。</translation>
     </message>
     <message>
+        <source>Waiting to verify WebDAV writes</source>
+        <translation>正在等待验证 WebDAV 写入能力</translation>
+    </message>
+    <message>
         <source>Verifying conditional writes with a temporary file…</source>
         <translation>正在使用临时文件验证条件写入…</translation>
     </message>
@@ -10850,8 +10842,8 @@ Example: JBSWY3DPEHPK3PXP</source>
         <translation>只读：服务器无法保护此次写入。本地修改已保留。</translation>
     </message>
     <message>
-        <source>Read-only until conditional writes are verified for this folder and account.</source>
-        <translation>只读：请先验证此账号在当前文件夹中的条件写入。</translation>
+        <source>Read-only: sign in to verify writes for this WebDAV account.</source>
+        <translation>只读：请登录以验证此 WebDAV 账号的写入能力。</translation>
     </message>
     <message>
         <source>Read-only: the server did not provide a usable ETag.</source>

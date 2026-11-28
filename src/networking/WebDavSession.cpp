@@ -116,6 +116,9 @@ WebDavSession::WebDavSession(const QString& reference, const QUrl& url, QObject*
     , m_url(url.isEmpty() ? savedUrl(reference) : canonicalUrl(url))
     , m_directory(directoryFor(reference))
 {
+    if (referenceFor(m_url, {}) == m_reference) {
+        setCredentials({}, {});
+    }
     m_retryTimer.setSingleShot(true);
     connect(&m_retryTimer, &QTimer::timeout, this, [this] {
         if (m_operation == Operation::Check || m_operation == Operation::Head) {
@@ -239,21 +242,22 @@ QString WebDavSession::bareProofPath() const
     return QFileInfo(m_directory).dir().filePath("bare-v1-" + QString::fromLatin1(key));
 }
 
-bool WebDavSession::canProbeWrites() const
+// Called after reading the database from the server, including when a cached session reconnects.
+bool WebDavSession::verifyBareWrites(const QByteArray& tag)
 {
-    return needsWriteVerification() && !m_workerCanceled && !m_reply;
-}
-
-bool WebDavSession::needsWriteVerification() const
-{
-    return m_ready && m_credentialsSet && !m_bareVerified
-           && WebDavWrite::kind(m_conflict && m_mergeFile ? m_mergeEtag : m_etag) == WebDavWrite::Kind::Bare;
-}
-
-void WebDavSession::probeWrites()
-{
-    if (!canProbeWrites()) {
-        return;
+    if (WebDavWrite::kind(tag) != WebDavWrite::Kind::Bare || m_bareVerified || tag == m_disabledTag) {
+        return false;
+    }
+    if (!m_credentialsSet) {
+        setStatus(Status::NeedsAttention, tr("Read-only: sign in to verify writes for this WebDAV account."));
+        return true;
+    }
+    if (!m_probeError.isEmpty()) {
+        setStatus(Status::NeedsAttention, m_probeError);
+        return true;
+    }
+    if (m_workerCanceled || m_reply) {
+        return true;
     }
     m_retryTimer.stop();
     m_workerCanceled = std::make_shared<std::atomic_bool>(false);
@@ -265,16 +269,26 @@ void WebDavSession::probeWrites()
         m_workerCanceled.reset();
         watcher->deleteLater();
         if (!result.leftover.isEmpty()) {
-            setStatus(Status::NeedsAttention,
-                      tr("Write verification could not clean up the temporary file: %1").arg(result.leftover));
+            m_probeError = tr("Write verification could not clean up the temporary file: %1").arg(result.leftover);
+            setStatus(Status::NeedsAttention, m_probeError);
         } else if (canceled) {
             retry();
+        } else if (result.loginRequired) {
+            m_needsAuth = true;
+            setStatus(Status::NeedsAttention, tr("WebDAV login required"));
+            emit authenticationRequired();
+        } else if (result.retry) {
+            m_operation = Operation::Verify;
+            m_retryAfter = qMax(m_retryAfter, result.retryAfter);
+            retryLater(tr("Waiting to verify WebDAV writes"));
         } else if (!result.passed) {
-            setStatus(Status::NeedsAttention, tr("Read-only: the server did not pass conditional write verification."));
+            m_probeError = tr("Read-only: the server did not pass conditional write verification.");
+            setStatus(Status::NeedsAttention, m_probeError);
         } else {
             QSaveFile proof(bareProofPath());
             if (!proof.open(QIODevice::WriteOnly) || proof.write("verified") != 8 || !proof.commit()) {
-                setStatus(Status::NeedsAttention, tr("Could not save the WebDAV synchronization state."));
+                m_probeError = tr("Could not save the WebDAV synchronization state.");
+                setStatus(Status::NeedsAttention, m_probeError);
                 return;
             }
             m_bareVerified = true;
@@ -284,6 +298,7 @@ void WebDavSession::probeWrites()
     });
     watcher->setFuture(QtConcurrent::run(WebDavWrite::probeBare, login));
     setStatus(Status::Pending, tr("Verifying conditional writes with a temporary file…"));
+    return true;
 }
 bool WebDavSession::hasConflict() const
 {
@@ -299,6 +314,7 @@ void WebDavSession::setCredentials(const QString& user, const QString& password)
     if (m_workerCanceled) {
         *m_workerCanceled = true;
     }
+    m_probeError.clear();
     ++m_credentialsRevision;
     m_headVerified = false;
     m_headDisabled = false;
@@ -460,6 +476,7 @@ void WebDavSession::retry()
         return;
     }
     m_retryTimer.stop();
+    m_probeError.clear();
     if (!m_lock || !m_ready) {
         open();
     } else if (m_conflict) {
@@ -896,7 +913,7 @@ void WebDavSession::finished()
     if (reply->error() != QNetworkReply::NoError
         || (operation == Operation::Upload ? (status != 200 && status != 201 && status != 204) : status != 200)) {
         m_retryAfter = qMax(m_retryAfter, WebDavWrite::retryAfterDeadline(status, reply->rawHeader("Retry-After")));
-        if (status == 0 || status == 408 || status == 429 || status >= 500) {
+        if (status == 0 || status == 408 || status == 423 || status == 429 || status >= 500) {
             retryLater(m_ready && (m_dirty || !m_attemptHash.isEmpty()) ? tr("Saved locally, waiting to sync")
                                                                         : tr("WebDAV unavailable. Offline"));
         } else {
@@ -1018,6 +1035,9 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
         if (etag.isEmpty() && !record({}, m_baseHash)) {
             return;
         }
+        if (!canReceiveRemote() && verifyBareWrites(etag)) {
+            return;
+        }
         if (etag.isEmpty()) {
             setStatus(Status::NeedsAttention, tr("Read-only: the server did not provide a usable ETag."));
         } else if (newCandidate || m_status != Status::NeedsAttention) {
@@ -1035,13 +1055,13 @@ void WebDavSession::receiveFile(Operation operation, const QByteArray& etag)
 
 void WebDavSession::continueSaving(bool uploadConfirmed)
 {
+    if (verifyBareWrites(m_etag)) {
+        return;
+    }
     if (isReadOnly()) {
         if (!m_disabledTag.isEmpty() && m_etag == m_disabledTag) {
             setStatus(Status::NeedsAttention,
                       tr("Read-only: the server could not protect this write. Local changes are preserved."));
-        } else if (WebDavWrite::kind(m_etag) == WebDavWrite::Kind::Bare) {
-            setStatus(Status::NeedsAttention,
-                      tr("Read-only until conditional writes are verified for this folder and account."));
         } else {
             setStatus(Status::NeedsAttention, tr("Read-only: the server did not provide a usable ETag."));
         }

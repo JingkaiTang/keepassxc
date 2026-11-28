@@ -116,10 +116,12 @@ public:
     bool rateLimited = false;
     std::function<void(const QByteArray&)> beforePut;
     bool pauseUpload = false;
+    bool rejectNextLockedUpload = false;
     bool omitUploadEtag = false;
     QByteArray uploadEtagOverride;
     bool rejectConditionalWrites = false;
     bool ignoreStaleProbe = false;
+    bool rateLimitNextProbe = false;
     int probeCreates = 0;
     int probeDeletes = 0;
     QList<QByteArray> probeMatches;
@@ -172,7 +174,12 @@ protected:
             if (!password.isEmpty() && headers.value("authorization") != "Basic " + ("alice:" + password).toBase64()) {
                 respond(socket, "401 Unauthorized", {}, "WWW-Authenticate: Basic realm=\"WebDAV test\"\r\n");
             } else if (path.contains("/keepassxc-write-test-")) {
-                handleProbe(socket, method, path, headers, body);
+                if (rateLimitNextProbe) {
+                    rateLimitNextProbe = false;
+                    respond(socket, "429 Too Many Requests", {}, "Retry-After: 1\r\n");
+                } else {
+                    handleProbe(socket, method, path, headers, body);
+                }
             } else if (method == "LOCK" && supportsLock) {
                 if (locked || headers.value("if-match") != "*" || headers.value("depth") != "0") {
                     respond(socket, "423 Locked");
@@ -210,6 +217,11 @@ protected:
                     respond(socket, "200 OK", method == "GET" ? contents : QByteArray(), etagHeader());
                 }
             } else if (method == "PUT") {
+                if (rejectNextLockedUpload) {
+                    rejectNextLockedUpload = false;
+                    respond(socket, "423 Locked");
+                    return;
+                }
                 if (beforePut) {
                     beforePut(headers.value("if-match"));
                 }

@@ -146,6 +146,9 @@ namespace
             if (reply->error() != QNetworkReply::NoError && status < 400) {
                 status = 0;
             }
+            if (status == 401 || status == 0 || status == 408 || status == 423 || status == 429 || status >= 500) {
+                retryableStatus = status;
+            }
             retryAfter = qMax(retryAfter, retryAfterDeadline(status, reply->rawHeader("Retry-After")));
             authenticated |= reply->property("triedLogin").toBool() && status >= 200 && status < 300;
             return {status, parseTag(reply->rawHeader("ETag")), reply->rawHeader("Lock-Token"), body, hash.result()};
@@ -158,6 +161,7 @@ namespace
             return send(method, headers, &buffer);
         }
 
+        int retryableStatus = -1;
         bool authenticated = false;
         qint64 retryAfter = 0;
 
@@ -228,17 +232,21 @@ WebDavWrite::ProbeResult WebDavWrite::probeBare(const Connection& connection)
     const auto filename = QStringLiteral("keepassxc-write-test-%1.kdbx").arg(id);
     const QUrl url = connection.url.adjusted(QUrl::RemoveFilename).resolved(QUrl(filename));
     Resource resource(connection, url);
+    const auto result = [&](bool passed = false, const QString& leftover = {}) -> ProbeResult {
+        return {passed, leftover, resource.retryableStatus == 401,
+                resource.retryableStatus >= 0 && resource.retryableStatus != 401, resource.retryAfter};
+    };
     const QByteArray a = id.toUtf8() + "/1", b = id.toUtf8() + "/2", c = id.toUtf8() + "/3";
     if (*connection.canceled || resource.send("GET").status != 404 || *connection.canceled) {
-        return {};
+        return result();
     }
     const auto created = resource.sendBytes("PUT", {{"If-None-Match", "*"}}, a);
     if (created.status == 412) {
-        return {};
+        return result();
     }
     const auto first = resource.send("GET");
     if (first.status == 404) {
-        return {};
+        return result();
     }
     bool passed = false;
     if (created.ok() && first.status == 200 && first.body == a && kind(first.tag) == Kind::Bare && !*connection.canceled) {
@@ -254,7 +262,7 @@ WebDavWrite::ProbeResult WebDavWrite::probeBare(const Connection& connection)
     // A lost create/PUT response may still have committed. Only remove our own random marker.
     const auto owned = resource.send("GET");
     if (owned.status != 200 || (owned.body != a && owned.body != b && owned.body != c)) {
-        return {false, owned.status == 404 ? QString() : filename};
+        return result(false, owned.status == 404 ? QString() : filename);
     }
     Headers cleanupHeaders;
     if (!owned.tag.isEmpty()) {
@@ -262,9 +270,9 @@ WebDavWrite::ProbeResult WebDavWrite::probeBare(const Connection& connection)
     }
     const auto removed = resource.send("DELETE", cleanupHeaders);
     if ((!removed.ok() && removed.status != 404) || resource.send("GET").status != 404) {
-        return {false, filename};
+        return result(false, filename);
     }
-    return {passed, {}};
+    return result(passed);
 }
 
 WebDavWrite::LockedResult WebDavWrite::writeLocked(const Connection& connection, const QString& snapshot,
