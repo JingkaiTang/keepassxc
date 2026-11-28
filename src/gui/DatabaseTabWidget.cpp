@@ -69,6 +69,10 @@ DatabaseTabWidget::DatabaseTabWidget(QWidget* parent)
     connect(m_databaseOpenDialog.data(), &DatabaseOpenDialog::dialogFinished,
             this, &DatabaseTabWidget::handleDatabaseUnlockDialogFinished);
     // clang-format on
+#ifdef KPXC_FEATURE_NETWORK
+    connect(this, &QTabWidget::currentChanged, this, &DatabaseTabWidget::promptForActiveWebDavLogin,
+            Qt::QueuedConnection);
+#endif
 
 #ifdef Q_OS_MACOS
     connect(macUtils(), SIGNAL(userSwitched()), SLOT(lockDatabasesOnUserSwitch()));
@@ -201,9 +205,17 @@ void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* logi
 {
     auto existing = m_webDavConnections.find(reference);
     if (existing != m_webDavConnections.end()) {
+        if (!inBackground) {
+            existing->openInBackground = false;
+        }
+        if (login && existing->session->needsAuthentication()) {
+            applyWebDavLogin(existing->session, login);
+            existing->session->retry();
+        }
         if (existing->widget) {
             if (!inBackground) {
                 setCurrentWidget(existing->widget);
+                promptForActiveWebDavLogin();
             }
         } else if (existing->ready) {
             attachWebDav(existing->session, inBackground);
@@ -213,26 +225,47 @@ void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* logi
 
     auto session = new WebDavSession(reference, login ? login->url() : QUrl(), this);
     m_webDavConnections[reference].session = session;
+    m_webDavConnections[reference].openInBackground = inBackground;
     connect(
         session,
         &WebDavSession::ready,
         this,
-        [this, session, inBackground] {
-            m_webDavConnections[session->reference()].ready = true;
-            attachWebDav(session, inBackground);
+        [this, session] {
+            auto& connection = m_webDavConnections[session->reference()];
+            connection.ready = true;
+            if (connection.widget) {
+                connection.widget->setEnabled(true);
+                connection.widget->switchToOpenDatabase(session->localPath());
+                updateTabName(indexOf(connection.widget));
+            } else {
+                attachWebDav(session, connection.openInBackground);
+            }
         },
         Qt::SingleShotConnection);
     connect(session, &WebDavSession::failed, this, [this, session](const QString& message) {
         emit messageGlobal(message, MessageWidget::Error);
-        if (!m_webDavConnections.value(session->reference()).ready) {
-            releaseWebDav(session->reference());
+        const auto connection = m_webDavConnections.value(session->reference());
+        if (!connection.ready) {
+            if (connection.widget) {
+                closeDatabaseTab(connection.widget);
+            } else {
+                releaseWebDav(session->reference());
+            }
         }
     });
     connect(session, &WebDavSession::authenticationRequired, this, [this, session] {
         auto connection = m_webDavConnections.value(session->reference());
         disconnect(connection.rememberLogin);
-        if (!connection.ready || connection.widget) {
-            enterWebDavLogin(session);
+        if (!connection.ready && !connection.widget) {
+            if (!connection.openInBackground) {
+                enterWebDavLogin(session);
+                return;
+            }
+            // The first download needs credentials. Leave a locked tab to resume it from.
+            attachWebDav(session, true);
+        }
+        if (auto* widget = currentDatabaseWidget(); widget && widget->webDavSession() == session) {
+            promptForActiveWebDavLogin();
         }
     });
     connect(session, &WebDavSession::statusChanged, this, [this, session] {
@@ -240,7 +273,11 @@ void DatabaseTabWidget::startWebDav(const QString& reference, WebDavDialog* logi
         if (connection.widget) {
             int index = indexOf(connection.widget);
             if (index >= 0) {
-                updateTabToolTip(index, connection.widget);
+                if (tabText(index) != Tools::escapeAccelerators(tabName(index))) {
+                    updateTabName(index);
+                } else {
+                    updateTabToolTip(index, connection.widget);
+                }
                 if (index == currentIndex()) {
                     emit webDavStatusChanged();
                 }
@@ -298,6 +335,7 @@ void DatabaseTabWidget::attachWebDav(WebDavSession* session, bool inBackground)
     auto reference = session->reference();
     m_webDavConnections[reference].widget = widget;
     widget->setWebDavSession(session);
+    widget->setEnabled(m_webDavConnections[reference].ready);
     connect(widget, &DatabaseWidget::databaseReferenceChanged, this, [this, reference, widget, session] {
         if (widget->webDavSession() != session && m_webDavConnections.value(reference).widget == widget) {
             m_webDavConnections[reference].widget.clear();
@@ -357,6 +395,15 @@ void DatabaseTabWidget::applyWebDavLogin(WebDavSession* session, WebDavDialog* d
         Qt::SingleShotConnection);
 }
 
+void DatabaseTabWidget::promptForActiveWebDavLogin()
+{
+    auto* widget = currentDatabaseWidget();
+    auto* session = widget ? widget->webDavSession() : nullptr;
+    if (session && session->needsAuthentication() && !m_webDavConnections.value(session->reference()).dialog) {
+        enterWebDavLogin(session);
+    }
+}
+
 void DatabaseTabWidget::enterWebDavLogin(WebDavSession* session)
 {
     const auto reference = session->reference();
@@ -378,7 +425,11 @@ void DatabaseTabWidget::enterWebDavLogin(WebDavSession* session)
             applyWebDavLogin(session, dialog);
             session->retry();
         } else if (!it->ready) {
-            releaseWebDav(reference);
+            if (it->widget) {
+                closeDatabaseTab(it->widget);
+            } else {
+                releaseWebDav(reference);
+            }
         }
     });
     dialog->open();
@@ -970,6 +1021,11 @@ QString DatabaseTabWidget::tabName(int index)
         tabName = tr("%1 [Locked]", "Database tab name modifier").arg(tabName);
     }
 
+#ifdef KPXC_FEATURE_NETWORK
+    if (auto* session = dbWidget->webDavSession(); session && session->needsAuthentication()) {
+        tabName = tr("%1 [WebDAV login required]").arg(tabName);
+    }
+#endif
     if (dbWidget->database()->isTemporaryDatabase()) {
         tabName = tr("%1 [Temporary]", "Database tab name modifier").arg(tabName);
     }

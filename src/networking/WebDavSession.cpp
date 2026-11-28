@@ -304,6 +304,23 @@ bool WebDavSession::hasConflict() const
 {
     return m_conflict;
 }
+WebDavSession::ConflictAction WebDavSession::conflictAction() const
+{
+    if (!m_conflict || m_status != Status::NeedsAttention) {
+        return ConflictAction::None;
+    }
+    // An unsuccessful write probe may stop synchronization before the merge planner runs.
+    if (isReadOnly() && hasPendingUpload()) {
+        return ConflictAction::SaveLocalCopy;
+    }
+    return m_conflictAction;
+}
+
+bool WebDavSession::needsAuthentication() const
+{
+    return m_needsAuth;
+}
+
 bool WebDavSession::hasPendingUpload() const
 {
     return m_dirty || !m_attemptHash.isEmpty();
@@ -605,9 +622,9 @@ bool WebDavSession::installCandidate(QFile& candidate, const QByteArray& hash)
     return true;
 }
 
-void WebDavSession::reportReview(const QString& message)
+void WebDavSession::reportReview(const QString& message, ConflictAction action)
 {
-    setStatus(Status::NeedsAttention, message);
+    setStatus(Status::NeedsAttention, message, action);
 }
 
 void WebDavSession::localSaved()
@@ -637,8 +654,9 @@ void WebDavSession::publishReady()
     }
 }
 
-void WebDavSession::setStatus(Status status, const QString& message)
+void WebDavSession::setStatus(Status status, const QString& message, ConflictAction action)
 {
+    m_conflictAction = action;
     m_status = status;
     m_statusText = message;
     emit statusChanged();

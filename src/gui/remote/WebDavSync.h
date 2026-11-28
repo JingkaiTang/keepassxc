@@ -3,6 +3,7 @@
 #define KEEPASSXC_WEBDAVSYNC_H
 
 #include "networking/WebDavMerge.h"
+#include "networking/WebDavSession.h"
 #include <QObject>
 #include <QPointer>
 
@@ -12,7 +13,6 @@ class QDialog;
 
 class Database;
 class DatabaseWidget;
-class WebDavSession;
 
 class WebDavSync : public QObject
 {
@@ -39,6 +39,7 @@ private:
     QPointer<QDialog> m_dialog;
     QString m_waitingPath;
     QString m_waitingMessage;
+    WebDavSession::ConflictAction m_waitingAction = WebDavSession::ConflictAction::None;
     quint64 m_waitingRevision = 0;
     bool m_applying = false;
     bool m_reviewRequested = false;

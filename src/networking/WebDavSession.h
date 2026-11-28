@@ -29,6 +29,12 @@ public:
         Pending,
         NeedsAttention
     };
+    enum class ConflictAction
+    {
+        None,
+        Review,
+        SaveLocalCopy
+    };
     WebDavSession(const QString& reference, const QUrl& url, QObject* parent = nullptr);
     ~WebDavSession() override;
     static QString referenceFor(const QUrl& url, const QString& user);
@@ -44,6 +50,8 @@ public:
     QString statusText() const;
     bool isReadOnly() const;
     bool hasConflict() const;
+    ConflictAction conflictAction() const;
+    bool needsAuthentication() const;
     bool hasPendingUpload() const;
 
     void setCredentials(const QString& user, const QString& password);
@@ -60,7 +68,7 @@ public:
     QString basePath() const;
     quint64 localRevision() const;
     bool installMerged(const QString& path, quint64 revision);
-    void reportReview(const QString& message);
+    void reportReview(const QString& message, ConflictAction action = ConflictAction::Review);
     void fetchForMerge();
     bool acceptMergeBase();
 
@@ -92,7 +100,7 @@ private:
     void prepareNetwork();
     void startCheck();
     bool record(const QByteArray& etag, const QByteArray& base, const QByteArray& attempt = {});
-    void setStatus(Status status, const QString& message);
+    void setStatus(Status status, const QString& message, ConflictAction action = ConflictAction::None);
     void publishReady();
     void request(Operation operation);
     QString bareProofPath() const;
@@ -110,6 +118,7 @@ private:
     QUrl m_url;
     QString m_directory;
     Status m_status = Status::Normal;
+    ConflictAction m_conflictAction = ConflictAction::None;
     QString m_statusText;
     QString m_user;
     QString m_password;

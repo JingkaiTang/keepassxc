@@ -142,10 +142,12 @@ private:
         QString user;
         quint64 loginRevision = 0;
         bool ready = false;
+        bool openInBackground = false;
     };
     void startWebDav(const QString& reference, WebDavDialog* login, bool inBackground);
     void attachWebDav(WebDavSession* session, bool inBackground);
     void enterWebDavLogin(WebDavSession* session);
+    void promptForActiveWebDavLogin();
     void applyWebDavLogin(WebDavSession* session, WebDavDialog* dialog);
     void releaseWebDav(const QString& reference);
     template <typename Operation, typename Callback>
